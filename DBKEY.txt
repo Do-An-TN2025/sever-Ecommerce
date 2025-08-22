@@ -1,0 +1,3 @@
+thanhvuphan2987
+4rIP6qjKzcC3XZTk
+mongodb+srv://thanhvuphan2987:4rIP6qjKzcC3XZTk@ecommerce-data.vqrzjag.mongodb.net/
