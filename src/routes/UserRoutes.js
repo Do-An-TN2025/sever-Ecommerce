@@ -8,7 +8,7 @@ const {
     deleteAddress,
     setDefaultAddress
 } = require("../controllers/userController");
-const authMiddleware = require("../middlewares/authMiddleware");
+const {authMiddleware} = require("../middlewares/authMiddleware");
 
 router.post("/register", register);
 router.post("/login", login);

@@ -1,10 +1,23 @@
-const mongoose = require("mongoose");
+const productReviewSchema = new mongoose.Schema(
+  {
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    rating: { type: Number, min: 1, max: 5, required: true },
+    comment: { type: String, trim: true }
+  },
+  { timestamps: true }
+);
 
-const ProductReviewSchema = new mongoose.Schema({
-  productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-  rating: { type: Number, min: 1, max: 5, required: true },
-  comment: String
-}, { timestamps: { createdAt: true, updatedAt: false } });
+productReviewSchema.post("save", async function () {
+  const Product = require("./Product").Product;
+  const reviews = await this.constructor.find({ productId: this.productId });
 
-module.exports = mongoose.model("ProductReview", ProductReviewSchema);
+  const avg = reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length;
+
+  await Product.findByIdAndUpdate(this.productId, {
+    $set: {
+      "rating.average": avg,
+      "rating.count": reviews.length
+    }
+  });
+});
