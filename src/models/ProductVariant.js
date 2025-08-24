@@ -1,19 +1,16 @@
 const mongoose = require("mongoose");
 
-const RatingSchema = new mongoose.Schema({
-  average: { type: Number, default: 0 },
-  count: { type: Number, default: 0 }
-}, { _id: false });
+const productVariantSchema = new mongoose.Schema({
+  productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
+  color: { type: String },
+  size: { type: String },
+  sku: { type: String, required: true, unique: true },
+  stock: { type: Number, default: 0 },
+  price: { type: Number, required: true },
+  discountPrice: { type: Number },
+  onSale: { type: Boolean, default: false },
+  saleNote: { type: String },
+  images: [{ type: String }]
+});
 
-const ProductSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  slug: { type: String, unique: true },
-  shortDescription: String,
-  categoryId: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
-  brand: String,
-  tags: [String],
-  status: { type: String, enum: ["active", "inactive"], default: "active" },
-  rating: RatingSchema
-}, { timestamps: true });
-
-module.exports = mongoose.model("Product", ProductSchema);
+module.exports = mongoose.model("ProductVariant", productVariantSchema);
