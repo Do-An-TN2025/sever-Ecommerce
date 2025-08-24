@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const productSchema = new mongoose.Schema({
   name: { type: String, required: true },
-  slug: { type: String, required: true, unique: true }, // SEO-friendly
+  slug: { type: String, required: true, unique: true }, 
   shortDescription: { type: String },
   categoryId: { type: mongoose.Schema.Types.ObjectId, ref: "Category", required: true },
   brand: { type: String },
