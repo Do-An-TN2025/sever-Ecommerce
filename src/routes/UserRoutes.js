@@ -6,11 +6,13 @@ const {
     addAddress,
     updateAddress,
     deleteAddress,
-    setDefaultAddress
+    setDefaultAddress,
+    registerAdmin
 } = require("../controllers/userController");
-const {authMiddleware} = require("../middlewares/authMiddleware");
+const {authMiddleware , adminOnly} = require("../middlewares/authMiddleware");
 
 router.post("/register", register);
+router.post("/register-admin",authMiddleware,adminOnly,registerAdmin);
 router.post("/login", login);
 router.get("/me", authMiddleware, getMe);
 router.put("/me", authMiddleware, updateMe);

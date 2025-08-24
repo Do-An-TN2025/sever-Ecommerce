@@ -31,6 +31,42 @@ exports.register = async (req, res) => {
   }
 };
 
+exports.registerAdmin = async (req, res) => {
+  try {
+    const { firstName, lastName, email, password, phone, role } = req.body;
+    if (!role || !["admin", "staff"].includes(role)) {
+      return res.status(400).json({ message: "Role phải là 'admin' hoặc 'staff'" });
+    }
+    const existingUser = await User.findOne({ email });
+    if (existingUser) 
+      return res.status(400).json({ message: "Email đã tồn tại" });
+    const hashed = await hashPassword(password);
+    const user = await User.create({
+      firstName,
+      lastName,
+      email,
+      password: hashed,
+      phone,
+      role
+    });
+
+    res.status(201).json({
+      message: `${role} đã được tạo thành công`,
+      user: {
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phone: user.phone,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi server", error: error.message });
+  }
+};
+
+
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;

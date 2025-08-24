@@ -54,7 +54,6 @@ const staffOrAdmin = async (req, res, next) => {
   next();
 };
 
-// Customer only middleware (optional - for customer-specific routes)
 const customerOnly = async (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ message: "Authentication required" });
