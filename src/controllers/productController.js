@@ -60,3 +60,31 @@ exports.deleteProduct = async (req, res) => {
     res.status(500).json({ message: "Lỗi server", error: err.message });
   }
 };
+
+exports.getAllProducts = async (req, res) => {
+  try {
+    const products = await Product.find();
+    res.json(products);
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "Lỗi khi lấy danh sách sản phẩm", error: err.message });
+  }
+};
+
+exports.getProductById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const product = await Product.findById(id);
+
+    if (!product) {
+      return res.status(404).json({ message: "Không tìm thấy sản phẩm" });
+    }
+
+    res.json(product);
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "Lỗi khi lấy sản phẩm", error: err.message });
+  }
+};
