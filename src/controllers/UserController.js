@@ -1,6 +1,8 @@
 const User = require("../models/User");
 const generateToken = require("../utils/generateToken");
 const { comparePassword, hashPassword } = require("../utils/hashPassword");
+const { generateOtp, saveOtp, verifyOtp } = require("../utils/otpService");
+const sendOtpMail = require("../utils/sendOtpMail");
 
 exports.register = async (req, res) => {
   try {
@@ -65,7 +67,6 @@ exports.registerAdmin = async (req, res) => {
     res.status(500).json({ message: "Lỗi server", error: error.message });
   }
 };
-
 
 exports.login = async (req, res) => {
   try {
@@ -208,6 +209,37 @@ exports.setDefaultAddress = async (req, res) => {
 
     await user.save();
     res.json(user.addresses);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.sendOtpController = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const otp = generateOtp();
+    saveOtp(email, otp);
+
+    await sendOtpMail(email, otp);
+
+    res.json({ message: "Đã gửi OTP, kiểm tra email" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.verifyOtpController = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!verifyOtp(email, otp)) {
+      return res
+        .status(400)
+        .json({ message: "OTP không hợp lệ hoặc đã hết hạn" });
+    }
+
+    res.json({ message: "Xác thực OTP thành công" });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
