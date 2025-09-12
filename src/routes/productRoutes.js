@@ -4,8 +4,7 @@ const productController = require("../controllers/productController");
 const { authMiddleware, staffOrAdmin } = require("../middlewares/authMiddleware");
 
 router.get("/", productController.getAllProducts);
-router.get("/:id", productController.getProductById);
-
+router.get("/default-variant", productController.getAllProductsWithDefaultVariant);
 // Staff/Admin
 router.post("/add-product", authMiddleware, staffOrAdmin, productController.createProduct);
 router.put("/:id", authMiddleware, staffOrAdmin, productController.updateProduct);
