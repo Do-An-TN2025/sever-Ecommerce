@@ -1,6 +1,7 @@
 
 const Product = require("../models/Product");
 const Category = require("../models/Category");
+const ProductVariant = require("../models/ProductVariant");
 
 exports.createProduct = async (req, res) => {
   try {
@@ -64,27 +65,38 @@ exports.deleteProduct = async (req, res) => {
 exports.getAllProducts = async (req, res) => {
   try {
     const products = await Product.find();
-    res.json(products);
+
+    const productsWithVariants = await Promise.all(
+      products.map(async (product) => {
+        const variants = await ProductVariant.find({ productId: product._id });
+
+        const defaultVariant =
+          variants.find((v) => v.onSale) || variants[0] || null;
+
+        return {
+          ...product.toObject(),
+          variants,
+          defaultVariant,
+          variantsCount: variants.length,
+        };
+      })
+    );
+
+    res.status(200).json({
+      status: "success",
+      message: "Lấy danh sách sản phẩm thành công",
+      data: productsWithVariants,
+      error: null,
+    });
   } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Lỗi khi lấy danh sách sản phẩm", error: err.message });
-  }
-};
-
-exports.getProductById = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const product = await Product.findById(id);
-
-    if (!product) {
-      return res.status(404).json({ message: "Không tìm thấy sản phẩm" });
-    }
-
-    res.json(product);
-  } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Lỗi khi lấy sản phẩm", error: err.message });
+    res.status(500).json({
+      status: "error",
+      message: "Lỗi khi lấy danh sách sản phẩm",
+      data: null,
+      error: {
+        code: 500,
+        details: err.message,
+      },
+    });
   }
 };

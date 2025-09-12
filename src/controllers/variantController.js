@@ -36,3 +36,23 @@ exports.createVariant = async (req, res) => {
     res.status(500).json({ message: "Failed to create variant", error: error.message });
   }
 };
+
+exports.getAllVariantsByProduct = async (req, res) => {
+  try {
+    const { productId } = req.params;
+
+    const variants = await ProductVariant.find({ productId });
+
+    if (!variants || variants.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "No variants found for this product" });
+    }
+
+    res.status(200).json({ variants });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Failed to get variants", error: error.message });
+  }
+};

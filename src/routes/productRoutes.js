@@ -3,8 +3,8 @@ const router = express.Router();
 const productController = require("../controllers/productController");
 const { authMiddleware, staffOrAdmin } = require("../middlewares/authMiddleware");
 
-// router.get("/", productController.getAllProducts);
-// router.get("/:id", productController.getProductById);
+router.get("/", productController.getAllProducts);
+router.get("/:id", productController.getProductById);
 
 // Staff/Admin
 router.post("/add-product", authMiddleware, staffOrAdmin, productController.createProduct);
