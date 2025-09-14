@@ -1,6 +1,6 @@
-
 const Product = require("../models/Product");
 const Category = require("../models/Category");
+const ProductVariant = require("../models/ProductVariant");
 
 exports.createProduct = async (req, res) => {
   try {
@@ -58,5 +58,84 @@ exports.deleteProduct = async (req, res) => {
     res.json({ message: "Xóa sản phẩm thành công" });
   } catch (err) {
     res.status(500).json({ message: "Lỗi server", error: err.message });
+  }
+};
+
+exports.getAllProducts = async (req, res) => {
+  try {
+    const products = await Product.find();
+
+    const productsWithVariants = await Promise.all(
+      products.map(async (product) => {
+        const variants = await ProductVariant.find({ productId: product._id });
+
+        const defaultVariant =
+          variants.find((v) => v.onSale) || variants[0] || null;
+
+        return {
+          ...product.toObject(),
+          variants,
+          defaultVariant,
+          variantsCount: variants.length,
+        };
+      })
+    );
+
+    res.status(200).json({
+      status: "success",
+      message: "Lấy danh sách sản phẩm thành công",
+      data: productsWithVariants,
+      error: null,
+    });
+  } catch (err) {
+    res.status(500).json({
+      status: "error",
+      message: "Lỗi khi lấy danh sách sản phẩm",
+      data: null,
+      error: {
+        code: 500,
+        details: err.message,
+      },
+    });
+  }
+};
+
+exports.getAllProductsWithDefaultVariant = async (req, res) => {
+  try {
+    // Lấy tất cả product
+    const products = await Product.find();
+
+    // Với mỗi product, lấy variant đầu tiên hoặc variant đang onSale
+    const productsWithDefaultVariant = await Promise.all(
+      products.map(async (product) => {
+        const variants = await ProductVariant.find({ productId: product._id });
+
+        const defaultVariant =
+          variants.find((v) => v.onSale) || variants[0] || null;
+
+        return {
+          ...product.toObject(),
+          defaultVariant,
+          variantsCount: variants.length,
+        };
+      })
+    );
+
+    res.status(200).json({
+      status: "success",
+      message: "Lấy danh sách sản phẩm kèm variant đầu tiên thành công",
+      data: productsWithDefaultVariant,
+      error: null,
+    });
+  } catch (err) {
+    res.status(500).json({
+      status: "error",
+      message: "Lỗi khi lấy danh sách sản phẩm với variant",
+      data: null,
+      error: {
+        code: 500,
+        details: err.message,
+      },
+    });
   }
 };
