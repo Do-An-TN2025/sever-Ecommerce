@@ -1,5 +1,5 @@
 # Sử dụng Node.js LTS
-FROM node:18
+FROM node:22
 
 # Tạo thư mục app
 WORKDIR /usr/src/app
@@ -8,7 +8,7 @@ WORKDIR /usr/src/app
 COPY package*.json ./
 
 # Cài đặt dependencies
-RUN npm install --production
+RUN npm install --production    
 
 # Copy toàn bộ source code vào container
 COPY . .
