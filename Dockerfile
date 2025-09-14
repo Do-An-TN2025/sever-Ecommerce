@@ -1,5 +1,5 @@
 # Sử dụng Node.js LTS
-FROM node:22
+FROM node:18
 
 # Tạo thư mục app
 WORKDIR /usr/src/app
