@@ -5,9 +5,13 @@ const { authMiddleware, staffOrAdmin } = require("../middlewares/authMiddleware"
 
 router.get("/", productController.getAllProducts);
 router.get("/default-variant", productController.getAllProductsWithDefaultVariant);
+
+router.get("/:slug", productController.getProductBySlugCategory);
 // Staff/Admin
+
 router.post("/add-product", authMiddleware, staffOrAdmin, productController.createProduct);
 router.put("/:id", authMiddleware, staffOrAdmin, productController.updateProduct);
 router.delete("/:id", authMiddleware, staffOrAdmin, productController.deleteProduct);
+
 
 module.exports = router;

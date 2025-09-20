@@ -7,10 +7,17 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
+const cors = require("cors");
+app.use(cors({
+  origin: process.env.CLIENT_URL || "http://localhost:3000",
+  credentials: true
+}));
+
+
 
 
 const userRoutes = require("./src/routes/UserRoutes");
-const categoryRoutes = require("./src/routes/CategoryRoutes");
+const categoryRoutes = require("./src/routes/categoryRoutes");
 const productRoutes = require("./src/routes/productRoutes");
 const variantRoutes = require("./src/routes/variantRoutes");
 
