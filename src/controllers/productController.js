@@ -226,6 +226,102 @@ exports.getProductBySlugCategory = async (req, res) => {
   }
 };
 
+exports.getProductDetailsBySlug = async (req, res) => {
+  try {
+    const { slug } = req.params;
+
+    // 1. Tìm product theo slug
+    const product = await Product.findOne({ slug })
+      .populate("categoryId", "name slug");
+    if (!product) {
+      return res.status(404).json({ message: "Không tìm thấy sản phẩm" });
+    }
+
+    // 2. Lấy tất cả variants của product
+    const variants = await ProductVariant.find({ productId: product._id });
+
+    if (!variants || variants.length === 0) {
+      return res.json({
+        ...product.toObject(),
+        variants: [],
+        availableColors: [],
+        availableSizes: [],
+        colorSizeMap: {},    // 👈 thêm để frontend biết mapping
+        minPrice: 0,
+        maxPrice: 0,
+        totalStock: 0
+      });
+    }
+
+    // 3. Tính toán thông tin tổng hợp
+    const availableColors = [...new Set(variants.map(v => v.color).filter(Boolean))];
+    const availableSizes = [...new Set(
+      variants.flatMap(v => v.sizes.map(s => s.size)).filter(Boolean)
+    )];
+
+    let minPrice = Infinity;
+    let maxPrice = 0;
+    let totalStock = 0;
+
+    // 👇 tạo mapping color -> sizes khả dụng
+    const colorSizeMap = {};
+
+    variants.forEach(variant => {
+      // lấy tất cả size khả dụng của màu này
+      const sizesForColor = variant.sizes
+        .filter(s => s.stock > 0) // chỉ lấy size còn hàng
+        .map(s => s.size);
+
+      colorSizeMap[variant.color] = [
+        ...(colorSizeMap[variant.color] || []),
+        ...sizesForColor
+      ];
+
+      // tính toán giá & stock
+      variant.sizes.forEach(s => {
+        const finalPrice = s.discountPrice && s.discountPrice > 0 ? s.discountPrice : s.price;
+        if (finalPrice < minPrice) minPrice = finalPrice;
+        if (finalPrice > maxPrice) maxPrice = finalPrice;
+        totalStock += s.stock;
+      });
+    });
+
+    // loại bỏ size trùng trong map
+    Object.keys(colorSizeMap).forEach(color => {
+      colorSizeMap[color] = [...new Set(colorSizeMap[color])];
+    });
+
+    const productData = {
+      ...product.toObject(),
+      variants: variants.map(v => ({
+        _id: v._id,
+        color: v.color,
+        colorCode: v.colorCode,
+        images: v.images,
+        sizes: v.sizes.map(s => ({
+          size: s.size,
+          price: s.price,
+          discountPrice: s.discountPrice,
+          stock: s.stock,
+          finalPrice: s.discountPrice && s.discountPrice > 0 ? s.discountPrice : s.price
+        }))
+      })),
+      availableColors,
+      availableSizes,
+      colorSizeMap,   // 👈 thêm để frontend disable size nào không có
+      minPrice: minPrice === Infinity ? 0 : minPrice,
+      maxPrice,
+      totalStock
+    };
+
+    res.json(productData);
+
+  } catch (err) {
+    console.error("Error fetching product:", err);
+    res.status(500).json({ message: "Lỗi server", error: err.message });
+  }
+};
+
 
 
 exports.getAllProducts = async (req, res) => {
