@@ -12,6 +12,7 @@ const productSchema = new mongoose.Schema({
     average: { type: Number, default: 0 },
     count: { type: Number, default: 0 }
   },
+  variants: [{ type: mongoose.Schema.Types.ObjectId, ref: "ProductVariant" }],
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
