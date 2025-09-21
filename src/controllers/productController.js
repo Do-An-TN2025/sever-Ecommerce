@@ -118,15 +118,21 @@ exports.getProductBySlugCategory = async (req, res) => {
         }
 
         // tìm size có giá thấp nhất
-        let minPriceVariant = null;
+         let minPriceVariant = null;
         validVariants.forEach(variant => {
           variant.sizes.forEach(s => {
-            const currentPrice = s.discountPrice || s.price;
-            if (!minPriceVariant || currentPrice < (minPriceVariant.discountPrice || minPriceVariant.price)) {
-              minPriceVariant = { ...s, variantId: variant._id };
+            const finalPrice = s.discountPrice && s.discountPrice > 0 ? s.discountPrice : s.price;
+
+            if (!minPriceVariant || finalPrice < minPriceVariant.finalPrice) {
+              minPriceVariant = {
+                ...s.toObject(),
+                variantId: variant._id,
+                finalPrice
+              };
             }
           });
         });
+
 
         // tất cả màu
         const availableColors = [...new Set(validVariants.map(v => v.color).filter(Boolean))];
