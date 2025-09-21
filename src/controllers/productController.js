@@ -88,19 +88,17 @@ exports.getProductBySlugCategory = async (req, res) => {
       status: 'active'
     };
 
-    // 3. Lấy products
+    // 3. Lấy products (chỉ sort theo các field cơ bản, không sort theo price ở đây)
     const products = await Product.find(productFilter)
       .populate('categoryId', 'name slug')
-      .sort({ [sortBy]: sortOrder === 'desc' ? -1 : 1 })
+      .sort(sortBy !== 'price' ? { [sortBy]: sortOrder === 'desc' ? -1 : 1 } : {})
       .skip((page - 1) * limit)
       .limit(parseInt(limit));
 
     // 4. Ghép variants
     const productsWithVariants = await Promise.all(
       products.map(async (product) => {
-        const variants = await ProductVariant.find({ 
-          productId: product._id
-        });
+        const variants = await ProductVariant.find({ productId: product._id });
 
         // chỉ lấy variant nào còn ít nhất 1 size có stock > 0
         const validVariants = variants.filter(v => 
@@ -118,11 +116,10 @@ exports.getProductBySlugCategory = async (req, res) => {
         }
 
         // tìm size có giá thấp nhất
-         let minPriceVariant = null;
+        let minPriceVariant = null;
         validVariants.forEach(variant => {
           variant.sizes.forEach(s => {
             const finalPrice = s.discountPrice && s.discountPrice > 0 ? s.discountPrice : s.price;
-
             if (!minPriceVariant || finalPrice < minPriceVariant.finalPrice) {
               minPriceVariant = {
                 ...s.toObject(),
@@ -132,7 +129,6 @@ exports.getProductBySlugCategory = async (req, res) => {
             }
           });
         });
-
 
         // tất cả màu
         const availableColors = [...new Set(validVariants.map(v => v.color).filter(Boolean))];
@@ -149,6 +145,7 @@ exports.getProductBySlugCategory = async (req, res) => {
           price: minPriceVariant?.price || 0,
           discountPrice: minPriceVariant?.discountPrice,
           onSale: minPriceVariant?.onSale || false,
+          finalPrice: minPriceVariant?.finalPrice || 0,   //  thêm finalPrice để sort
           colorVariants: uniqueColorVariants.map(v => ({
             color: v.color,
             colorCode: v.colorCode,
@@ -173,7 +170,7 @@ exports.getProductBySlugCategory = async (req, res) => {
 
     if (minPrice || maxPrice) {
       filteredProducts = filteredProducts.filter(product => {
-        const productPrice = product.discountPrice || product.price;
+        const productPrice = product.finalPrice;
         if (minPrice && productPrice < parseInt(minPrice)) return false;
         if (maxPrice && productPrice > parseInt(maxPrice)) return false;
         return true;
@@ -192,11 +189,24 @@ exports.getProductBySlugCategory = async (req, res) => {
       );
     }
 
-    // 6. Pagination
+    //  6. Sort lại theo price nếu cần
+    if (sortBy === 'price') {
+      filteredProducts = [...filteredProducts].sort((a, b) => {
+        return sortOrder === 'desc' 
+          ? b.finalPrice - a.finalPrice 
+          : a.finalPrice - b.finalPrice;
+      });
+    }
+
+    // 7. Pagination thủ công (sau khi sort và filter)
     const total = await Product.countDocuments(productFilter);
+    const paginatedProducts = filteredProducts.slice(
+      (page - 1) * limit,
+      page * limit
+    );
 
     res.json({
-      products: filteredProducts,
+      products: paginatedProducts,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / limit),
@@ -215,6 +225,7 @@ exports.getProductBySlugCategory = async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 };
+
 
 
 exports.getAllProducts = async (req, res) => {
