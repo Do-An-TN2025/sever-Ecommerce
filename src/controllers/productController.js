@@ -246,7 +246,7 @@ exports.getProductDetailsBySlug = async (req, res) => {
         variants: [],
         availableColors: [],
         availableSizes: [],
-        colorSizeMap: {},    // 👈 thêm để frontend biết mapping
+        colorSizeMap: {},  
         minPrice: 0,
         maxPrice: 0,
         totalStock: 0
@@ -308,7 +308,7 @@ exports.getProductDetailsBySlug = async (req, res) => {
       })),
       availableColors,
       availableSizes,
-      colorSizeMap,   // 👈 thêm để frontend disable size nào không có
+      colorSizeMap,   
       minPrice: minPrice === Infinity ? 0 : minPrice,
       maxPrice,
       totalStock
@@ -322,6 +322,335 @@ exports.getProductDetailsBySlug = async (req, res) => {
   }
 };
 
+
+exports.searchProducts = async (req, res) => {
+  try {
+    const { 
+      q,
+      page = 1, 
+      limit = 20,
+      sortBy = 'relevance',
+      sortOrder = 'desc',
+      minPrice,
+      maxPrice,
+      color,
+      size,
+      category,
+    } = req.query;
+
+    if (!q || q.trim().length === 0) {
+      return res.status(400).json({ 
+        message: 'Search query is required',
+        products: [],
+        pagination: {
+          currentPage: 1,
+          totalPages: 0,
+          total: 0,
+          limit: parseInt(limit)
+        }
+      });
+    }
+
+    const searchTerm = q.trim();  
+    const searchTerms = searchTerm.split(/\s+/).filter(term => term.length > 0);
+    const regexPatterns = searchTerms.map(term => new RegExp(term, 'i'));
+
+    const searchFilter = {
+      status: 'active',
+      $or: [
+        { name: { $regex: searchTerm, $options: 'i' } },
+        { shortDescription: { $regex: searchTerm, $options: 'i' } },
+        { brand: { $regex: searchTerm, $options: 'i' } },
+        { tags: { $in: regexPatterns } },
+        
+        ...searchTerms.map(term => ({
+          name: { $regex: term, $options: 'i' }
+        })),
+        ...searchTerms.map(term => ({
+          shortDescription: { $regex: term, $options: 'i' }
+        })),
+        ...searchTerms.map(term => ({
+          brand: { $regex: term, $options: 'i' }
+        }))
+      ]
+    };
+
+    if (category) {
+      const categoryDoc = await Category.findOne({ slug: category });
+      if (categoryDoc) {
+        searchFilter.categoryId = categoryDoc._id;
+      }
+    }
+    let products = await Product.find(searchFilter)
+      .populate('categoryId', 'name slug');
+
+    // 4. Tính relevance score chi tiết hơn
+    const productsWithRelevance = await Promise.all(
+      products.map(async (product) => {
+        const variants = await ProductVariant.find({ productId: product._id });
+        const validVariants = variants.filter(v => 
+          v.sizes.some(s => s.stock > 0)
+        );
+
+        if (validVariants.length === 0) {
+          return null;
+        }
+
+        // Tính relevance score chi tiết
+        let relevanceScore = 0;
+        const lowerSearchTerm = searchTerm.toLowerCase();
+        const lowerName = product.name.toLowerCase();
+        const lowerDescription = product.shortDescription?.toLowerCase() || '';
+        const lowerBrand = product.brand?.toLowerCase() || '';
+
+        // Exact match - điểm cao nhất
+        if (lowerName === lowerSearchTerm) relevanceScore += 100;
+        else if (lowerName.startsWith(lowerSearchTerm)) relevanceScore += 80;
+        else if (lowerName.includes(lowerSearchTerm)) relevanceScore += 60;
+
+        // Match từng từ trong search term
+        searchTerms.forEach(term => {
+          const lowerTerm = term.toLowerCase();
+          
+          // Trong name
+          if (lowerName === lowerTerm) relevanceScore += 40;
+          else if (lowerName.includes(lowerTerm)) relevanceScore += 20;
+          
+          // Trong description
+          if (lowerDescription.includes(lowerTerm)) relevanceScore += 10;
+          
+          // Trong brand
+          if (lowerBrand.includes(lowerTerm)) relevanceScore += 15;
+        });
+
+        // Match trong tags
+        if (product.tags) {
+          product.tags.forEach(tag => {
+            const lowerTag = tag.toLowerCase();
+            if (lowerTag === lowerSearchTerm) relevanceScore += 30;
+            else if (lowerTag.includes(lowerSearchTerm)) relevanceScore += 15;
+            
+            searchTerms.forEach(term => {
+              if (lowerTag.includes(term.toLowerCase())) relevanceScore += 8;
+            });
+          });
+        }
+
+        // Ưu tiên products có nhiều từ khớp hơn
+        const matchedTerms = searchTerms.filter(term => 
+          lowerName.includes(term.toLowerCase()) ||
+          lowerDescription.includes(term.toLowerCase()) ||
+          lowerBrand.includes(term.toLowerCase())
+        );
+        
+        if (matchedTerms.length === searchTerms.length) {
+          relevanceScore += 25; // Tất cả từ đều khớp
+        } else if (matchedTerms.length > 0) {
+          relevanceScore += (matchedTerms.length * 10); // Một số từ khớp
+        }
+
+        // Phần còn lại của logic xử lý variants và price giữ nguyên...
+        const uniqueColorVariants = [];
+        const seenColors = new Set();
+        for (const variant of validVariants) {
+          if (!seenColors.has(variant.color) && uniqueColorVariants.length < 5) {
+            uniqueColorVariants.push(variant);
+            seenColors.add(variant.color);
+          }
+        }
+
+        let minPriceVariant = null;
+        let maxPriceVariant = null;
+        validVariants.forEach(variant => {
+          variant.sizes.forEach(s => {
+            const finalPrice = s.discountPrice && s.discountPrice > 0 ? s.discountPrice : s.price;
+            const originalPrice = s.price;
+            
+            if (!minPriceVariant || finalPrice < minPriceVariant.finalPrice) {
+              minPriceVariant = {
+                ...s.toObject(),
+                variantId: variant._id,
+                finalPrice,
+                originalPrice,
+                discountPercentage: s.discountPrice ? Math.round((1 - s.discountPrice / s.price) * 100) : 0
+              };
+            }
+            
+            if (!maxPriceVariant || finalPrice > maxPriceVariant.finalPrice) {
+              maxPriceVariant = {
+                ...s.toObject(),
+                finalPrice,
+                originalPrice
+              };
+            }
+          });
+        });
+
+        const availableColors = [...new Set(validVariants.map(v => v.color).filter(Boolean))];
+        const availableSizes = [...new Set(validVariants.flatMap(v => v.sizes.map(s => s.size)).filter(Boolean))];
+
+        return {
+          _id: product._id,
+          name: product.name,
+          slug: product.slug,
+          shortDescription: product.shortDescription,
+          brand: product.brand,
+          category: product.categoryId,
+          rating: product.rating,
+          price: minPriceVariant?.originalPrice || 0,
+          discountPrice: minPriceVariant?.discountPrice,
+          finalPrice: minPriceVariant?.finalPrice || 0,
+          maxPrice: maxPriceVariant?.finalPrice || 0,
+          discountPercentage: minPriceVariant?.discountPercentage || 0,
+          onSale: minPriceVariant?.discountPrice > 0,
+          images: uniqueColorVariants.length > 0 ? uniqueColorVariants[0].images : [],
+          colors: availableColors.slice(0, 5),
+          colorVariants: uniqueColorVariants.map(v => ({
+            color: v.color,
+            colorCode: v.colorCode,
+            images: v.images
+          })),
+          availableColors,
+          availableSizes,
+          totalStock: validVariants.reduce((sum, v) => 
+            sum + v.sizes.reduce((sSum, s) => sSum + s.stock, 0), 0),
+          relevanceScore,
+          searchMatchDetails: {
+            nameMatches: searchTerms.filter(term => 
+              product.name.toLowerCase().includes(term.toLowerCase())
+            ).length,
+            totalSearchTerms: searchTerms.length
+          }
+        };
+      })
+    );
+
+    // 5. Loại bỏ products null và apply filters
+    let filteredProducts = productsWithRelevance
+      .filter(p => p !== null)
+      .filter(p => p.relevanceScore > 0); // Chỉ lấy products có relevance score > 0
+
+    // Filter theo price, color, size (giữ nguyên)
+    if (minPrice || maxPrice) {
+      filteredProducts = filteredProducts.filter(product => {
+        const productPrice = product.finalPrice;
+        if (minPrice && productPrice < parseInt(minPrice)) return false;
+        if (maxPrice && productPrice > parseInt(maxPrice)) return false;
+        return true;
+      });
+    }
+
+    if (color) {
+      filteredProducts = filteredProducts.filter(product => 
+        product.availableColors.includes(color)
+      );
+    }
+
+    if (size) {
+      filteredProducts = filteredProducts.filter(product => 
+        product.availableSizes.includes(size)
+      );
+    }
+
+    // 6. Sort products với ưu tiên relevance
+    if (sortBy === 'price') {
+      filteredProducts.sort((a, b) => {
+        return sortOrder === 'desc' 
+          ? b.finalPrice - a.finalPrice 
+          : a.finalPrice - b.finalPrice;
+      });
+    } else {
+      filteredProducts.sort((a, b) => {
+        // Ưu tiên products match tất cả từ khóa
+        const aAllTerms = a.searchMatchDetails.nameMatches === a.searchMatchDetails.totalSearchTerms;
+        const bAllTerms = b.searchMatchDetails.nameMatches === b.searchMatchDetails.totalSearchTerms;
+        
+        if (aAllTerms && !bAllTerms) return -1;
+        if (!aAllTerms && bAllTerms) return 1;
+        return b.relevanceScore - a.relevanceScore;
+      });
+    }
+
+    // 7. Pagination
+    const total = filteredProducts.length;
+    const totalPages = Math.ceil(total / limit);
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + parseInt(limit);
+    const paginatedProducts = filteredProducts.slice(startIndex, endIndex);
+
+    // 8. Search suggestions cải tiến
+    const suggestions = [];
+    if (paginatedProducts.length === 0) {
+      // Thử tìm với ít từ hơn
+      if (searchTerms.length > 1) {
+        const simplerQuery = searchTerms.slice(0, -1).join(' ');
+        const suggestionProducts = await Product.find({
+          status: 'active',
+          $or: [
+            { name: { $regex: simplerQuery, $options: 'i' } },
+            { shortDescription: { $regex: simplerQuery, $options: 'i' } }
+          ]
+        }).limit(3);
+        
+        if (suggestionProducts.length > 0) {
+          suggestions.push(`Thử tìm với: "${simplerQuery}"`);
+        }
+      }
+      
+      const relatedProducts = await Product.find({
+        status: 'active',
+        $or: searchTerms.map(term => ({
+          name: { $regex: term, $options: 'i' }
+        }))
+      }).limit(2);
+      
+      suggestions.push(...relatedProducts.map(p => p.name));
+    }
+
+    res.json({
+      query: searchTerm,
+      products: paginatedProducts,
+      suggestions,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages,
+        total,
+        limit: parseInt(limit),
+        hasNext: page < totalPages,
+        hasPrev: page > 1
+      },
+      filters: {
+        appliedFilters: {
+          minPrice: minPrice ? parseInt(minPrice) : null,
+          maxPrice: maxPrice ? parseInt(maxPrice) : null,
+          color,
+          size,
+          category
+        },
+        availableFilters: filteredProducts.length > 0 ? {
+          priceRange: {
+            min: Math.min(...filteredProducts.map(p => p.finalPrice)),
+            max: Math.max(...filteredProducts.map(p => p.finalPrice))
+          },
+          colors: [...new Set(filteredProducts.flatMap(p => p.availableColors))],
+          sizes: [...new Set(filteredProducts.flatMap(p => p.availableSizes))]
+        } : null
+      },
+      searchMetrics: {
+        totalFound: total,
+        searchTerms: searchTerms.length,
+        matchingStrategy: searchTerms.length > 1 ? 'multi-term' : 'single-term'
+      }
+    });
+
+  } catch (error) {
+    console.error('Search products error:', error);
+    res.status(500).json({ 
+      message: 'Internal server error',
+      error: error.message 
+    });
+  }
+};
 
 
 exports.getAllProducts = async (req, res) => {
