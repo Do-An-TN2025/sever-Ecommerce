@@ -18,17 +18,24 @@ exports.createVariant = async (req, res) => {
       productId,
       color,
       colorCode,
-      sizes, // Đây là string "[{...}]" chứ không phải array
+      sizes,
       isDefault,
       status
     } = req.body;
 
-    // FIX: Parse sizes từ JSON string thành array object
+    console.log('Raw sizes received:', sizes);
+    console.log('Files received:', req.files);
+
     let sizesArray = [];
     if (sizes) {
       try {
-        sizesArray = JSON.parse(sizes);
+        if (typeof sizes === 'string') {
+          sizesArray = JSON.parse(sizes);
+        } else if (Array.isArray(sizes)) {
+          sizesArray = sizes;
+        }
       } catch (parseError) {
+        console.error('Error parsing sizes:', parseError);
         return res.status(400).json({ 
           message: "Invalid sizes format", 
           error: parseError.message 
@@ -36,13 +43,46 @@ exports.createVariant = async (req, res) => {
       }
     }
 
-    console.log('Parsed sizes:', sizesArray); // Debug
-
     const imageUrls = [];
+
     if (req.files && req.files.length > 0) {
+      console.log(`Processing ${req.files.length} image files`);
+      
       for (const file of req.files) {
-        const imageUrl = await uploadImage(file.path, "variants");
-        imageUrls.push(imageUrl);
+        try {
+          console.log('Uploading file:', file.originalname, file.path);
+
+          if (!file.path) {
+            console.error('File path is undefined:', file);
+            continue;
+          }
+          
+          const imageUrl = await uploadImage(file.path, "variants");
+          if (imageUrl) {
+            imageUrls.push(imageUrl);
+            console.log('Successfully uploaded:', imageUrl);
+          } else {
+            console.error('Upload returned undefined for file:', file.originalname);
+          }
+        } catch (uploadError) {
+          console.error('Error uploading image:', uploadError);
+        }
+      }
+    }
+
+    let imageUrlsFromBody = [];
+    if (req.body.images) {
+      try {
+        imageUrlsFromBody = typeof req.body.images === 'string' 
+          ? JSON.parse(req.body.images) 
+          : req.body.images;
+        
+        if (!Array.isArray(imageUrlsFromBody)) {
+          imageUrlsFromBody = [imageUrlsFromBody];
+        }
+        console.log('Images from body:', imageUrlsFromBody);
+      } catch (parseError) {
+        console.error('Error parsing images from body:', parseError);
       }
     }
 
@@ -50,21 +90,39 @@ exports.createVariant = async (req, res) => {
       productId,
       color,
       colorCode,
-      sizes: sizesArray, // Dùng array đã parsed
-      images: imageUrls,
-      isDefault,
-      status
+      sizes: sizesArray,
+      images: [...imageUrls, ...imageUrlsFromBody],
+      isDefault: isDefault || false,
+      status: status || 'in_stock'
+    });
+
+    console.log('Creating variant with:', {
+      productId,
+      color,
+      colorCode,
+      sizesCount: sizesArray.length,
+      imagesCount: newVariant.images.length
     });
 
     await newVariant.save();
-    await Product.findByIdAndUpdate(productId, { $push: { variants: newVariant._id } });
+  
+    await Product.findByIdAndUpdate(productId, { 
+      $push: { variants: newVariant._id } 
+    });
 
     await recalcVariantStatus(newVariant._id);
 
-    res.status(201).json({ message: "Variant created", variant: newVariant });
+    res.status(201).json({ 
+      message: "Variant created successfully", 
+      variant: newVariant 
+    });
+
   } catch (error) {
     console.error('Error creating variant:', error);
-    res.status(500).json({ message: "Failed to create variant", error: error.message });
+    res.status(500).json({ 
+      message: "Failed to create variant", 
+      error: error.message 
+    });
   }
 };
 
