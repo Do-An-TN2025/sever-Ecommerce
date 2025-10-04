@@ -675,7 +675,7 @@ exports.getAllProducts = async (req, res) => {
 
     res.status(200).json({
       status: "success",
-      message: "Lấy danh sách sản phẩm thành công",
+      message: "Lấy danh sách sản phẩm thành công123",
       data: productsWithVariants,
       error: null,
     });
