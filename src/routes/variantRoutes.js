@@ -8,9 +8,12 @@ const {
   updateSizeInVariant,
   removeSizeFromVariant,
   updateVariantImages,
+  updateVariant
 } = require("../controllers/variantController");
 
 router.post("/add-variant", upload.array("images", 5), createVariant);
+
+router.put("/update-variant/:variantId" , upload.array("images", 10) , updateVariant );
 
 router.post("/:variantId/sizes", addSizeToVariant);
 
