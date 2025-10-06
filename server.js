@@ -1,33 +1,25 @@
 const express = require("express");
-const dotenv = require("dotenv");
-const connectDB = require("./src/config/DB");
-
-dotenv.config(); 
+const cors = require("cors");
+const { ENV, connectDB } = require("./src/config");
 
 const app = express();
 app.use(express.json());
+app.use(cors({ origin: ENV.CLIENT_URL, credentials: true }));
 
-const cors = require("cors");
-app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:3000",
-  credentials: true
-}));
+// Routes
+app.use("/api/users", require("./src/routes/userRoutes"));
+app.use("/api/categories", require("./src/routes/categoryRoutes"));
+app.use("/api/products", require("./src/routes/productRoutes"));
+app.use("/api/variants", require("./src/routes/variantRoutes"));
+app.use("/api/chat", require("./src/routes/chatRoutes"));
+app.use("/api/cart", require("./src/routes/cartRoutes"));
 
+// Global error handler (sau cùng)
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+  res.status(err.status || 500).json({ message: err.message || 'Server error' });
+});
 
-const userRoutes = require("./src/routes/userRoutes");
-const categoryRoutes = require("./src/routes/categoryRoutes");
-const productRoutes = require("./src/routes/productRoutes");
-const variantRoutes = require("./src/routes/variantRoutes");
-const chatRoutes = require('./src/routes/chatRoutes');
-const cartRoutes = require('./src/routes/cartRoutes');
-
-app.use("/api/users", userRoutes);  
-app.use("/api/categories", categoryRoutes);
-app.use("/api/products", productRoutes);
-app.use("/api/variants", variantRoutes);
-app.use('/api/chat', chatRoutes);
-app.use('/api/cart', cartRoutes);
-
-connectDB();
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Server run on port ${PORT}`));
+connectDB().then(() => {
+  app.listen(ENV.PORT, () => console.log(`Server on ${ENV.PORT}`));
+});
