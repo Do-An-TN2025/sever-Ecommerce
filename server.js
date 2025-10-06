@@ -14,8 +14,6 @@ app.use(cors({
 }));
 
 
-
-
 const userRoutes = require("./src/routes/userRoutes");
 const categoryRoutes = require("./src/routes/categoryRoutes");
 const productRoutes = require("./src/routes/productRoutes");
