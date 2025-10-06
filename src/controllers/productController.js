@@ -675,7 +675,7 @@ exports.getAllProducts = async (req, res) => {
 
     res.status(200).json({
       status: "success",
-      message: "Lấy danh sách sản phẩm thành công123",
+      message: "Lấy danh sách sản phẩm thành công",
       data: productsWithVariants,
       error: null,
     });
@@ -731,3 +731,4 @@ exports.getAllProductsWithDefaultVariant = async (req, res) => {
     });
   }
 };
+  
