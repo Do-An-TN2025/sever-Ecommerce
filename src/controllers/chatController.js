@@ -16,7 +16,6 @@ if (API_KEY) {
   }
 }
 
-// ---- Meta cache (category + brand) ----
 const META_TTL = 60_000;
 let _metaCache = { ts: 0, categories: [], brands: [] };
 async function loadMeta() {
@@ -27,6 +26,11 @@ async function loadMeta() {
   _metaCache = { ts: now, categories, brands };
   return _metaCache;
 }
+
+const GENERIC_WORDS = new Set([
+  "áo","ao","quần","quan","đồ","do","basic","chống","chong","nắng","nang",
+  "giày","giay","sandal","phụ","kien","thời","trang","thoi","trending","local","brand"
+]);
 
 // ---- Constants / helpers ----
 const COLOR_ALIASES = {
@@ -49,11 +53,40 @@ const STOPWORDS = new Set([
   "cần","muốn","mua","giá","gia","cái","chiếc","hãng","hang","cái","mẫu","mau"
 ]);
 
+// BỔ SUNG GENERIC_WORDS & DISTINCTIVE FILTER (nếu chưa có)
+
+
 function escapeRegex(str) { return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
+// Thêm hàm bỏ dấu & chuẩn hóa
+function stripDiacritics(str) {
+  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function normalizeText(str) {
+  return stripDiacritics(str).toLowerCase();
+}
+
+// Cập nhật COLOR_ALIASES thành dạng gồm cả không dấu tự động
+Object.keys(COLOR_ALIASES).forEach(base => {
+  const arr = COLOR_ALIASES[base];
+  const extra = new Set(arr.map(a => stripDiacritics(a)));
+  extra.forEach(e => { if (!arr.includes(e)) arr.push(e); });
+  // thêm base không dấu
+  const baseNo = stripDiacritics(base);
+  if (!arr.includes(baseNo)) arr.push(baseNo);
+});
+
+// Hàm màu mới: kiểm tra cả có dấu & không dấu
 function normalizeColor(sentenceLower) {
+  const sentenceNo = normalizeText(sentenceLower);
   for (const base in COLOR_ALIASES) {
-    if (COLOR_ALIASES[base].some(a => sentenceLower.includes(a))) return base;
+    const aliases = COLOR_ALIASES[base];
+    if (aliases.some(a => {
+      const aLow = a.toLowerCase();
+      return sentenceLower.includes(aLow) || sentenceNo.includes(normalizeText(aLow));
+    })) {
+      return base; // luôn trả về base có dấu chuẩn
+    }
   }
   return null;
 }
@@ -64,7 +97,7 @@ function extractSize(textLower) {
 }
 
 function extractPrices(textLower) {
-  // hỗ trợ: dưới 300k, 200k-400k, từ 500 đến 1 triệu, ~300k, <=150k
+
   const unitFactor = (n, u) => {
     let num = Number(n.replace(/[.,]/g, ""));
     if (isNaN(num)) return null;
@@ -237,6 +270,10 @@ async function queryProducts(filters, pagination) {
   const { page = 1, limit = 30 } = pagination;
   const productFilter = { status: "active" };
 
+  function emptyResult() {
+    return { total: 0, page, limit, products: [] };
+  }
+
   // category
   if (categorySlug) {
     const cat = await Category.findOne({ slug: categorySlug }).lean();
@@ -246,12 +283,12 @@ async function queryProducts(filters, pagination) {
   // brand
   if (brand) productFilter.brand = new RegExp(`^${escapeRegex(brand)}$`, "i");
 
-  // color pre-filter -> find productIds from variants
+  // color pre-filter
   if (color) {
     const aliasList = COLOR_ALIASES[color] || [color];
     const colorRegex = new RegExp(`^(${aliasList.map(escapeRegex).join("|")})$`, "i");
     const variantColorDocs = await ProductVariant.find({ color: colorRegex }, "productId").lean();
-    if (!variantColorDocs.length) return [];
+    if (!variantColorDocs.length) return emptyResult();
     const productIds = [...new Set(variantColorDocs.map(v => v.productId))];
     productFilter._id = { $in: productIds };
   }
@@ -267,12 +304,11 @@ async function queryProducts(filters, pagination) {
     ];
   }
 
-  // Fetch products
   const baseProducts = await Product.find(productFilter)
     .populate("categoryId", "name slug")
     .lean();
 
-  if (!baseProducts.length) return [];
+  if (!baseProducts.length) return emptyResult();
 
   // Load variants for all
   const idMap = baseProducts.map(p => p._id);
@@ -392,6 +428,25 @@ async function queryProducts(filters, pagination) {
       }
     });
   }
+  
+
+  // ---- DISTINCTIVE KEYWORD FILTER ----
+  const importantKeywords = (filters.keywords || []).filter(k => !GENERIC_WORDS.has(normalizeText(k)));
+  if (importantKeywords.length) {
+    for (let i = enriched.length - 1; i >= 0; i--) {
+      const p = enriched[i];
+      const nameN = normalizeText(p.name || "");
+      const descN = normalizeText(p.shortDescription || "");
+      const brandN = normalizeText(p.brand || "");
+      const tagsN = (p.tags || []).map(t => normalizeText(t||""));
+      const allMatch = importantKeywords.every(mk => {
+        const mkN = normalizeText(mk);
+        return nameN.includes(mkN) || descN.includes(mkN) || brandN.includes(mkN) ||
+               tagsN.some(t => t.includes(mkN));
+      });
+      if (!allMatch) enriched.splice(i,1);
+    }
+  }
 
   // Score + sort
   enriched.forEach(p => { p._score = scoreProduct(p, filters); });
@@ -429,10 +484,138 @@ async function queryProducts(filters, pagination) {
   };
 }
 
-// ---- Main handler ----
+// OPTIONAL: suy luận category từ keyword nếu missing
+async function inferCategoryFromKeywords(parsed) {
+  if (parsed.categorySlug) return parsed;
+  if (parsed.keywords?.some(k => k.toLowerCase().includes("polo"))) {
+    parsed.categorySlug = "ao-polo-nam"; // đổi cho phù hợp DB thực tế
+  }
+  return parsed;
+}
+
+// Làm sạch keywords (dùng cho kết quả Gemini)
+function cleanParsedKeywords(parsed) {
+  if (!Array.isArray(parsed.keywords)) return;
+  const color = parsed.color;
+  let aliases = [];
+  if (color && COLOR_ALIASES[color]) {
+    aliases = COLOR_ALIASES[color].map(a => normalizeText(a));
+  }
+  const seen = new Set();
+  parsed.keywords = parsed.keywords
+    .map(k => k.trim())
+    .filter(Boolean)
+    .filter(k => {
+      const norm = normalizeText(k);
+      if (STOPWORDS.has(norm)) return false;
+      if (GENERIC_WORDS.has(norm)) return false;
+      if (color && aliases.includes(norm)) return false; // loại token màu
+      if (norm.length < 3) return false;
+      if (seen.has(norm)) return false;
+      seen.add(norm);
+      return true;
+    });
+  if (!parsed.keywords.length) parsed.keywords = null;
+}
+
+// BỔ SUNG alias navy
+COLOR_ALIASES["xanh dương"].push("navy"); // hoặc tạo COLOR_ALIASES["navy"] = ["navy"]
+
+// Cache màu variant động
+let _variantColorCache = { ts:0, colors:[] };
+async function loadVariantColors() {
+  const now = Date.now();
+  if (now - _variantColorCache.ts < 5 * 60_000 && _variantColorCache.colors.length) return _variantColorCache.colors;
+  const list = await ProductVariant.distinct("color");
+  _variantColorCache = { ts: now, colors: (list||[]).filter(Boolean).map(c => c.toLowerCase()) };
+  return _variantColorCache.colors;
+}
+
+// Dynamic detect nếu alias không ra
+async function dynamicColorDetect(messageLower) {
+  const colors = await loadVariantColors();
+  const noDiac = normalizeText(messageLower);
+  // ưu tiên token sau từ "màu"
+  const afterColor = messageLower.split(/\bmàu\b/i)[1];
+  if (afterColor) {
+    const token = afterColor.trim().split(/\s+/)[0]?.toLowerCase();
+    if (token && colors.includes(token)) return token;
+  }
+  // fallback: tìm bất kỳ màu trong câu
+  for (const c of colors) {
+    if (messageLower.includes(c) || noDiac.includes(normalizeText(c))) return c;
+  }
+  return null;
+}
+
+// Merge filters từ context với parsed mới
+function mergeFilters(prev, next) {
+  if (!prev) return next;
+  const merged = { ...prev };
+
+  // Keywords: nếu next có keywords khác null & length >0 -> union (loại trùng)
+  if (next.keywords && next.keywords.length) {
+    const set = new Set([...(prev.keywords||[]), ...next.keywords]);
+    merged.keywords = [...set];
+  }
+  // Nếu next không có keywords nhưng prev có -> giữ lại
+  if (!next.keywords && prev.keywords) merged.keywords = prev.keywords;
+
+  // Category: giữ cũ nếu next không cung cấp
+  if (next.categorySlug) merged.categorySlug = next.categorySlug;
+
+  // Brand
+  if (next.brand) merged.brand = next.brand;
+
+  // Color: thay thế nếu next.color có
+  if (next.color) merged.color = next.color;
+
+  // Size
+  if (next.size) merged.size = next.size;
+
+  // Giá mới override từng phần
+  if (next.minPrice != null) merged.minPrice = next.minPrice;
+  if (next.maxPrice != null) merged.maxPrice = next.maxPrice;
+
+  // Sort
+  if (next.sortBy) merged.sortBy = next.sortBy;
+  if (next.sortOrder) merged.sortOrder = next.sortOrder;
+
+  // Intent giữ là search_products
+  merged.intent = "search_products";
+
+  return merged;
+}
+
+// Điều chỉnh cleanParsedKeywords để dùng lại bên merge
+function cleanParsedKeywordsInPlace(parsed) {
+  if (!Array.isArray(parsed.keywords)) return;
+  const color = parsed.color;
+  let aliases = [];
+  if (color && COLOR_ALIASES[color]) {
+    aliases = COLOR_ALIASES[color].map(a => normalizeText(a));
+  }
+  const seen = new Set();
+  parsed.keywords = parsed.keywords
+    .map(k => k.trim())
+    .filter(Boolean)
+    .filter(k => {
+      const norm = normalizeText(k);
+      if (STOPWORDS.has(norm)) return false;
+      if (GENERIC_WORDS.has(norm)) return false;
+      if (color && aliases.includes(norm)) return false;
+      if (norm.length < 3) return false;
+      if (seen.has(norm)) return false;
+      seen.add(norm);
+      return true;
+    });
+  if (!parsed.keywords.length) parsed.keywords = null;
+}
+
+// ---- Main handler (thay phần exports.chatSearch hiện tại) ----
 exports.chatSearch = async (req, res) => {
   try {
-    const { messages, page, limit, sortBy, sortOrder } = req.body || {};
+    const { messages, page, limit, sortBy, sortOrder, contextFilters } = req.body || {};
     if (!Array.isArray(messages) || !messages.length) {
       return res.status(400).json({ message: "messages required" });
     }
@@ -441,42 +624,58 @@ exports.chatSearch = async (req, res) => {
       return res.status(400).json({ message: "empty user message" });
     }
 
+    // Parse câu mới
     let parsed = await callGeminiForFilters(userMessage);
     if (!parsed) parsed = await fallbackParse(userMessage);
 
-    // bổ sung nếu thiếu
     const lower = userMessage.toLowerCase();
     const { categorySlug, brand } = await semanticCategoryBrand(lower);
     if (!parsed.categorySlug && categorySlug) parsed.categorySlug = categorySlug;
     if (!parsed.brand && brand) parsed.brand = brand;
 
+    // Màu (alias)
     if (parsed.color) {
       const norm = normalizeColor(parsed.color.toLowerCase());
       if (norm) parsed.color = norm;
     } else {
-      // detect color if AI missed
-      const autoColor = normalizeColor(lower);
+      let autoColor = normalizeColor(lower);
+      if (!autoColor) {
+        // dynamic color (navy ...)
+        const dyn = await dynamicColorDetect(lower);
+        if (dyn) autoColor = dyn;
+      }
       if (autoColor) parsed.color = autoColor;
     }
 
-    if (!parsed.minPrice && !parsed.maxPrice) {
+    // Dọn keywords trước khi merge
+    cleanParsedKeywordsInPlace(parsed);
+
+    // Merge với contextFilters nếu có
+    let merged = mergeFilters(contextFilters, parsed);
+
+    // Sau merge nếu chưa có min/max thì thử trích từ câu mới
+    if (!merged.minPrice && !merged.maxPrice) {
       const { minPrice, maxPrice } = extractPrices(lower);
-      if (minPrice) parsed.minPrice = minPrice;
-      if (maxPrice) parsed.maxPrice = maxPrice;
+      if (minPrice) merged.minPrice = minPrice;
+      if (maxPrice) merged.maxPrice = maxPrice;
     }
 
-    if (parsed.size) parsed.size = parsed.size.toUpperCase();
-    if (sortBy) parsed.sortBy = sortBy;
-    if (sortOrder) parsed.sortOrder = sortOrder;
+    if (merged.size) merged.size = merged.size.toUpperCase();
+    if (sortBy) merged.sortBy = sortBy;
+    if (sortOrder) merged.sortOrder = sortOrder;
 
-    const result = await queryProducts(parsed, {
+    await inferCategoryFromKeywords(merged);
+
+    if (CHAT_DEBUG) console.log('[CHAT_DEBUG] merged filters =>', merged);
+
+    const result = await queryProducts(merged, {
       page: Math.max(1, Number(page) || 1),
       limit: Math.min(100, Math.max(1, Number(limit) || 30))
     });
 
     let reply;
     if (!result.products.length) {
-      reply = "Không tìm thấy sản phẩm phù hợp. Bạn mô tả rõ hơn màu, loại, size hoặc giá?";
+      reply = "Không tìm thấy sản phẩm. Thử đổi màu / khoảng giá khác?";
     } else {
       const sample = result.products.slice(0, 5).map(p => p.name).join(", ");
       reply = `Có ${result.total} sản phẩm. Ví dụ: ${sample}. Muốn lọc thêm?`;
@@ -484,14 +683,10 @@ exports.chatSearch = async (req, res) => {
 
     res.json({
       reply,
-      filters: parsed,
+      filters: merged,         
       products: result.products,
-      metrics: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit
-      },
-      debug: CHAT_DEBUG ? { userMessage } : undefined
+      metrics: { total: result.total, page: result.page, limit: result.limit },
+      debug: CHAT_DEBUG ? { lastMessage: userMessage } : undefined
     });
   } catch (err) {
     console.error("chatSearch error:", err);

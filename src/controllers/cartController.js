@@ -4,7 +4,6 @@ const Product = require('../models/Product');
 const { v4: uuidv4 } = require('uuid');
 
 function resolveIdentity(req) {
-  // Giả sử middleware auth gắn req.user nếu đăng nhập
   if (req.user) return { type: 'user', id: req.user._id };
   const guestId = req.headers['x-cart-id'] || req.cookies?.cartId;
   return { type: 'guest', id: guestId || null };
@@ -45,10 +44,8 @@ function summarize(cart) {
 exports.addItem = async (req, res) => {
   const { productId, variantId, size, quantity = 1 } = req.body;
   if (!productId || !variantId || !size) return res.status(400).json({ message: 'Missing fields' });
-
   const identity = resolveIdentity(req);
   const cart = await getOrCreateCart(identity);
-
   // validate variant + size
   const variant = await ProductVariant.findById(variantId).lean();
   if (!variant || String(variant.productId) !== String(productId)) return res.status(404).json({ message: 'Variant not found' });

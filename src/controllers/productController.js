@@ -76,34 +76,97 @@ exports.getProductBySlugCategory = async (req, res) => {
       size 
     } = req.query;
 
-    // 1. Tìm category
-    const category = await Category.findOne({ slug });
-    if (!category) {
-      return res.status(404).json({ message: 'Category not found' });
+    const PAGE = parseInt(page);
+    const LIMIT = parseInt(limit);
+
+    const GENDER_GROUPS = new Set(['nam','nu','tre-em']);
+    let productFilter;
+    let categoryMeta;
+
+    if (GENDER_GROUPS.has(slug)) {
+      // --- Nhóm giới tính ---
+      // 1. Lấy tất cả category có liên quan (tùy bạn có field nào thêm thì bổ sung)
+      const catQuery = {
+        $or: [
+          { slug: new RegExp(`${slug}$`, 'i') },              // slug kết thúc bằng -nam / -nu / -tre-em
+          { gender: slug },                                   // nếu Category có field gender
+          { group: slug }                                     // nếu có field group
+        ]
+      };
+      const relatedCategories = await Category.find(catQuery).lean();
+      const categoryIds = relatedCategories.map(c => c._id);
+
+      productFilter = {
+        status: 'active',
+        $or: [
+          ...(categoryIds.length ? [{ categoryId: { $in: categoryIds } }] : []),
+          { gender: slug },        // nếu Product có field gender
+          { tags: slug }           // fallback dựa trên tags
+        ]
+      };
+
+      categoryMeta = {
+        _id: null,
+        name: slug === 'nam' ? 'Sản phẩm Nam' : slug === 'nu' ? 'Sản phẩm Nữ' : 'Sản phẩm Trẻ em',
+        slug,
+        type: 'group'
+      };
+    } else {
+      // --- Category đơn ---
+      const category = await Category.findOne({ slug });
+      if (!category) {
+        return res.status(404).json({ message: 'Category not found' });
+      }
+      productFilter = { 
+        categoryId: category._id,
+        status: 'active'
+      };
+      categoryMeta = {
+        _id: category._id,
+        name: category.name,
+        slug: category.slug,
+        type: 'category'
+      };
     }
 
-    // 2. Filter cho product
-    const productFilter = { 
-      categoryId: category._id,
-      status: 'active'
-    };
+    // 2. Query products (áp dụng sort gốc trừ price)
+    const baseSort = sortBy !== 'price'
+      ? { [sortBy]: sortOrder === 'desc' ? -1 : 1 }
+      : { createdAt: -1 };
 
-    // 3. Lấy products (chỉ sort theo các field cơ bản, không sort theo price ở đây)
     const products = await Product.find(productFilter)
       .populate('categoryId', 'name slug')
-      .sort(sortBy !== 'price' ? { [sortBy]: sortOrder === 'desc' ? -1 : 1 } : {})
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit));
+      .sort(baseSort)
+      .skip((PAGE - 1) * LIMIT)
+      .limit(LIMIT);
 
-    // 4. Ghép variants
+    // 3. Build variants data
     const productsWithVariants = await Promise.all(
       products.map(async (product) => {
-        const variants = await ProductVariant.find({ productId: product._id });
+        const variants = await ProductVariant.find({ productId: product._id }).lean();
 
-        // chỉ lấy variant nào còn ít nhất 1 size có stock > 0
         const validVariants = variants.filter(v => 
-          v.sizes.some(s => s.stock > 0)
+          Array.isArray(v.sizes) && v.sizes.some(s => (s.stock || 0) > 0)
         );
+
+        if (!validVariants.length) {
+          return {
+            _id: product._id,
+            name: product.name,
+            slug: product.slug,
+            shortDescription: product.shortDescription,
+            category: product.categoryId,
+            rating: product.rating,
+            price: 0,
+            discountPrice: 0,
+            onSale: false,
+            finalPrice: 0,
+            colorVariants: [],
+            availableColors: [],
+            availableSizes: [],
+            totalStock: 0
+          };
+        }
 
         // lấy 5 màu khác nhau
         const uniqueColorVariants = [];
@@ -115,109 +178,103 @@ exports.getProductBySlugCategory = async (req, res) => {
           }
         }
 
-        // tìm size có giá thấp nhất
+        // tìm size giá thấp nhất
         let minPriceVariant = null;
         validVariants.forEach(variant => {
           variant.sizes.forEach(s => {
-            const finalPrice = s.discountPrice && s.discountPrice > 0 ? s.discountPrice : s.price;
-            if (!minPriceVariant || finalPrice < minPriceVariant.finalPrice) {
+            const fp = (s.discountPrice && s.discountPrice > 0) ? s.discountPrice : s.price;
+            if (!minPriceVariant || fp < minPriceVariant.finalPrice) {
               minPriceVariant = {
-                ...s.toObject(),
+                ...s,
                 variantId: variant._id,
-                finalPrice
+                finalPrice: fp
               };
             }
           });
         });
 
-        // tất cả màu
         const availableColors = [...new Set(validVariants.map(v => v.color).filter(Boolean))];
-        // tất cả size
         const availableSizes = [...new Set(validVariants.flatMap(v => v.sizes.map(s => s.size)).filter(Boolean))];
 
         return {
           _id: product._id,
-          name: product.name,
-          slug: product.slug,
-          shortDescription: product.shortDescription,
-          category: product.categoryId,
-          rating: product.rating,
-          price: minPriceVariant?.price || 0,
-          discountPrice: minPriceVariant?.discountPrice,
-          onSale: minPriceVariant?.onSale || false,
-          finalPrice: minPriceVariant?.finalPrice || 0,   //  thêm finalPrice để sort
-          colorVariants: uniqueColorVariants.map(v => ({
-            color: v.color,
-            colorCode: v.colorCode,
-            images: v.images,
-            sizes: v.sizes.map(s => ({
-              size: s.size,
-              price: s.price,
-              discountPrice: s.discountPrice,
-              stock: s.stock
-            }))
-          })),
-          availableColors,
-          availableSizes,
-          totalStock: validVariants.reduce((sum, v) => 
-            sum + v.sizes.reduce((sSum, s) => sSum + s.stock, 0), 0)
+            name: product.name,
+            slug: product.slug,
+            shortDescription: product.shortDescription,
+            category: product.categoryId,
+            rating: product.rating,
+            price: minPriceVariant?.price || 0,
+            discountPrice: minPriceVariant?.discountPrice,
+            onSale: !!(minPriceVariant?.discountPrice && minPriceVariant.discountPrice > 0),
+            finalPrice: minPriceVariant?.finalPrice || 0,
+            colorVariants: uniqueColorVariants.map(v => ({
+              color: v.color,
+              colorCode: v.colorCode,
+              images: v.images,
+              sizes: v.sizes.map(s => ({
+                size: s.size,
+                price: s.price,
+                discountPrice: s.discountPrice,
+                stock: s.stock
+              }))
+            })),
+            availableColors,
+            availableSizes,
+            totalStock: validVariants.reduce((sum, v) =>
+              sum + v.sizes.reduce((sSum, s) => sSum + (s.stock || 0), 0), 0)
         };
       })
     );
 
-    // 5. Apply filter (minPrice, maxPrice, color, size)
+    // 4. Filter phụ
     let filteredProducts = productsWithVariants;
 
     if (minPrice || maxPrice) {
-      filteredProducts = filteredProducts.filter(product => {
-        const productPrice = product.finalPrice;
-        if (minPrice && productPrice < parseInt(minPrice)) return false;
-        if (maxPrice && productPrice > parseInt(maxPrice)) return false;
+      const minP = minPrice ? parseInt(minPrice) : null;
+      const maxP = maxPrice ? parseInt(maxPrice) : null;
+      filteredProducts = filteredProducts.filter(p => {
+        const priceVal = p.finalPrice;
+        if (minP !== null && priceVal < minP) return false;
+        if (maxP !== null && priceVal > maxP) return false;
         return true;
       });
     }
 
     if (color) {
-      filteredProducts = filteredProducts.filter(product => 
-        product.availableColors.includes(color)
-      );
+      filteredProducts = filteredProducts.filter(p => p.availableColors.includes(color));
     }
-
     if (size) {
-      filteredProducts = filteredProducts.filter(product => 
-        product.availableSizes.includes(size)
+      filteredProducts = filteredProducts.filter(p => p.availableSizes.includes(size));
+    }
+
+    // 5. Sort lại theo price nếu cần
+    if (sortBy === 'price') {
+      filteredProducts = [...filteredProducts].sort((a,b) => 
+        sortOrder === 'desc'
+          ? b.finalPrice - a.finalPrice
+          : a.finalPrice - b.finalPrice
       );
     }
 
-    //  6. Sort lại theo price nếu cần
-    if (sortBy === 'price') {
-      filteredProducts = [...filteredProducts].sort((a, b) => {
-        return sortOrder === 'desc' 
-          ? b.finalPrice - a.finalPrice 
-          : a.finalPrice - b.finalPrice;
-      });
-    }
+    // 6. Tổng (dựa theo productFilter ban đầu, không tính min/max/color/size)
+    const totalBase = await Product.countDocuments(productFilter);
 
-    // 7. Pagination thủ công (sau khi sort và filter)
-    const total = await Product.countDocuments(productFilter);
-    const paginatedProducts = filteredProducts.slice(
-      (page - 1) * limit,
-      page * limit
-    );
+    // 7. Pagination thủ công sau filter
+    const start = (PAGE - 1) * LIMIT;
+    const end = start + LIMIT;
+    const paginatedProducts = filteredProducts.slice(start, end);
 
     res.json({
       products: paginatedProducts,
       pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        total,
-        limit: parseInt(limit)
+        currentPage: PAGE,
+        totalPages: Math.ceil(totalBase / LIMIT),
+        total: totalBase,
+        limit: LIMIT,
+        returned: paginatedProducts.length,
+        afterFilterCount: filteredProducts.length
       },
-      category: {
-        _id: category._id,
-        name: category.name,
-        slug: category.slug
-      }
+      category: categoryMeta
     });
 
   } catch (error) {
@@ -731,4 +788,3 @@ exports.getAllProductsWithDefaultVariant = async (req, res) => {
     });
   }
 };
-  
