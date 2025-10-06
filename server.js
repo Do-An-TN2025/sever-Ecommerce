@@ -14,18 +14,19 @@ app.use(cors({
 }));
 
 
-
-
 const userRoutes = require("./src/routes/userRoutes");
 const categoryRoutes = require("./src/routes/categoryRoutes");
 const productRoutes = require("./src/routes/productRoutes");
 const variantRoutes = require("./src/routes/variantRoutes");
+const chatRoutes = require('./src/routes/chatRoutes');
+const cartRoutes = require('./src/routes/cartRoutes');
 
 app.use("/api/users", userRoutes);  
 app.use("/api/categories", categoryRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/variants", variantRoutes);
-
+app.use('/api/chat', chatRoutes);
+app.use('/api/cart', cartRoutes);
 
 connectDB();
 const PORT = process.env.PORT || 8080;
