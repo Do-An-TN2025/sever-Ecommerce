@@ -16,13 +16,14 @@ const OrderHistorySchema = new mongoose.Schema({
 }, { _id: false });
 
 const SocialLoginSchema = new mongoose.Schema({
-  provider: String,
-  providerId: String,
-  accessToken: String
+  provider: { type: String, required: true }, 
+  providerId: { type: String, required: true },
+  linkedAt: { type: Date, default: Date.now }
 }, { _id: false });
 
+
 const UserSchema = new mongoose.Schema({
- firstName: { type: String, required: true },
+  firstName: { type: String, required: true },
   lastName: { type: String, required: true },
   email: { type: String, unique: true, required: true },
   password: String,
@@ -35,7 +36,7 @@ const UserSchema = new mongoose.Schema({
   status: { type: String, default: "active" },
   orderHistory: [OrderHistorySchema],
   wishlist: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }],
-  socialLogin: SocialLoginSchema
+  socialLogins: [SocialLoginSchema],
 }, { timestamps: true });
 
 module.exports = mongoose.model("User", UserSchema);

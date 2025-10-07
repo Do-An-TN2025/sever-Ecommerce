@@ -7,10 +7,12 @@ const {
     updateAddress,
     deleteAddress,
     setDefaultAddress,
-    registerAdmin
+    registerAdmin,
+    socialLogin
 } = require("../controllers/userController");
 const {authMiddleware , adminOnly} = require("../middlewares/authMiddleware");
 
+router.post("/social-login" , socialLogin);
 router.post("/register", register);
 router.post("/register-admin",authMiddleware,adminOnly,registerAdmin);
 router.post("/login", login);
