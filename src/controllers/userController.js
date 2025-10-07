@@ -9,43 +9,73 @@ const admin = require('../config/firebase');
 exports.socialLogin = async (req, res) => {
   try {
     const { idToken } = req.body;
-    if (!idToken) return res.status(400).json({ message: 'idToken required' });
+    if (!idToken) return res.status(400).json({ message: "idToken required" });
 
-    if (process.env.FIREBASE_DEBUG === '1') {
-      console.log('[SOCIAL] raw length:', idToken.length);
-      try {
-        const payload = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64').toString('utf8'));
-        console.log('[SOCIAL] payload.aud:', payload.aud, 'iss:', payload.iss);
-        console.log('[SOCIAL] service project_id:', process.env.FIREBASE_SERVICE_JSON ? JSON.parse(process.env.FIREBASE_SERVICE_JSON).project_id : 'none');
-      } catch (e) {
-        console.log('[SOCIAL] cannot decode payload', e.message);
-      }
+    let decoded;
+    try {
+      decoded = await admin.auth().verifyIdToken(idToken);
+    } catch (e) {
+      console.error("[SOCIAL] verifyIdToken failed:", e.errorInfo || e.message);
+      return res.status(401).json({ message: "Invalid idToken", stage: "verify" });
     }
-    const decoded = await admin.auth().verifyIdToken(idToken);
-    const provider = decoded.firebase?.sign_in_provider || 'firebase';
+
+    const rawProvider = decoded.firebase?.sign_in_provider || "firebase";
+    const provider = rawProvider.replace(".com", "");
     const providerId = decoded.uid;
-    const email = decoded.email;
-    const name = decoded.name || '';
+    const emailRaw = decoded.email;
+    const name = decoded.name || "";
     const picture = decoded.picture;
 
-    let user = await User.findOne({
-      $or: [
-        { email },
-        { socialLogins: { $elemMatch: { provider, providerId } } }
-      ]
-    });
+    // Fallback email (đảm bảo unique)
+    const email = emailRaw || `${provider}_${providerId}@no-email.local`;
+
+    // Tách tên
+    const parts = name.trim().split(/\s+/);
+    const firstName = parts.slice(0, -1).join(" ") || parts[0] || "User";
+    const lastName = parts.slice(-1).join(" ") || "";
+
+    // Xây query động
+    const or = [{ socialLogins: { $elemMatch: { provider, providerId } } }];
+    if (emailRaw) or.unshift({ email: emailRaw }); // chỉ push email thực sự có
+
+    let user = await User.findOne({ $or: or });
 
     if (!user) {
-      const parts = name.trim().split(/\s+/);
-      user = await User.create({
-        firstName: parts.slice(0, -1).join(' ') || parts[0] || 'User',
-        lastName: parts.slice(-1).join(' ') || '',
-        email,
-        avatar: picture,
-        socialLogins: [{ provider, providerId }]
-      });
+      try {
+        user = await User.create({
+          firstName,
+            lastName,
+          email,
+          avatar: picture,
+          socialLogins: [{ provider, providerId }]
+        });
+      } catch (e) {
+        if (e.code === 11000) {
+          // Email đã tồn tại nhưng socialLogins chưa có => gắn thêm
+          user = await User.findOne({ email: emailRaw || email });
+          if (!user)
+            return res.status(500).json({ message: "Duplicate email, user not found" });
+          if (
+            !user.socialLogins.some(
+              (s) => s.provider === provider && s.providerId === providerId
+            )
+          ) {
+            user.socialLogins.push({ provider, providerId });
+          }
+          if (picture && user.avatar !== picture) user.avatar = picture;
+          await user.save();
+        } else {
+          console.error("[SOCIAL] create user error:", e);
+          return res.status(500).json({ message: "Create user failed" });
+        }
+      }
     } else {
-      if (!user.socialLogins.some(sl => sl.provider === provider && sl.providerId === providerId)) {
+      // Có user: cập nhật provider nếu thiếu
+      if (
+        !user.socialLogins.some(
+          (s) => s.provider === provider && s.providerId === providerId
+        )
+      ) {
         user.socialLogins.push({ provider, providerId });
       }
       if (picture && user.avatar !== picture) user.avatar = picture;
@@ -54,7 +84,7 @@ exports.socialLogin = async (req, res) => {
 
     const token = generateToken(user._id);
 
-    res.json({
+    return res.json({
       token,
       user: {
         id: user._id,
@@ -63,12 +93,12 @@ exports.socialLogin = async (req, res) => {
         lastName: user.lastName,
         avatar: user.avatar,
         role: user.role,
-        providers: user.socialLogins.map(s => s.provider)
+        providers: user.socialLogins.map((s) => s.provider)
       }
     });
   } catch (e) {
-   console.error('socialLogin error detail:', e.errorInfo || e.message);
-    return res.status(401).json({ message: 'Invalid idToken' });
+    console.error("socialLogin outer error:", e);
+    return res.status(500).json({ message: "Server error" });
   }
 };
 
