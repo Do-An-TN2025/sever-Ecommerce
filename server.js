@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const { ENV, connectDB } = require("./src/config");
-
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const app = express();
 app.use(express.json());
 app.use(cors({ origin: ENV.CLIENT_URL, credentials: true }));
@@ -13,8 +13,8 @@ app.use("/api/products", require("./src/routes/productRoutes"));
 app.use("/api/variants", require("./src/routes/variantRoutes"));
 app.use("/api/chat", require("./src/routes/chatRoutes"));
 app.use("/api/cart", require("./src/routes/cartRoutes"));
+app.use ("/api/orders", require("./src/routes/orderRoutes"));
 
-// Global error handler (sau cùng)
 app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(err.status || 500).json({ message: err.message || 'Server error' });

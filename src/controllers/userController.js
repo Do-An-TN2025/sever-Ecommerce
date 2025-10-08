@@ -3,6 +3,104 @@ const generateToken = require("../utils/generateToken");
 const { comparePassword, hashPassword } = require("../utils/hashPassword");
 const { generateOtp, saveOtp, verifyOtp } = require("../utils/otpService");
 const sendOtpMail = require("../utils/sendOtpMail");
+const admin = require('../config/firebase');
+
+
+exports.socialLogin = async (req, res) => {
+  try {
+    const { idToken } = req.body;
+    if (!idToken) return res.status(400).json({ message: "idToken required" });
+
+    let decoded;
+    try {
+      decoded = await admin.auth().verifyIdToken(idToken);
+    } catch (e) {
+      console.error("[SOCIAL] verifyIdToken failed:", e.errorInfo || e.message);
+      return res.status(401).json({ message: "Invalid idToken", stage: "verify" });
+    }
+
+    const rawProvider = decoded.firebase?.sign_in_provider || "firebase";
+    const provider = rawProvider.replace(".com", "");
+    const providerId = decoded.uid;
+    const emailRaw = decoded.email;
+    const name = decoded.name || "";
+    const picture = decoded.picture;
+
+    // Fallback email (đảm bảo unique)
+    const email = emailRaw || `${provider}_${providerId}@no-email.local`;
+
+    // Tách tên
+    const parts = name.trim().split(/\s+/);
+    const firstName = parts.slice(0, -1).join(" ") || parts[0] || "User";
+    const lastName = parts.slice(-1).join(" ") || "";
+
+    // Xây query động
+    const or = [{ socialLogins: { $elemMatch: { provider, providerId } } }];
+    if (emailRaw) or.unshift({ email: emailRaw }); // chỉ push email thực sự có
+
+    let user = await User.findOne({ $or: or });
+
+    if (!user) {
+      try {
+        user = await User.create({
+          firstName,
+            lastName,
+          email,
+          avatar: picture,
+          socialLogins: [{ provider, providerId }]
+        });
+      } catch (e) {
+        if (e.code === 11000) {
+          // Email đã tồn tại nhưng socialLogins chưa có => gắn thêm
+          user = await User.findOne({ email: emailRaw || email });
+          if (!user)
+            return res.status(500).json({ message: "Duplicate email, user not found" });
+          if (
+            !user.socialLogins.some(
+              (s) => s.provider === provider && s.providerId === providerId
+            )
+          ) {
+            user.socialLogins.push({ provider, providerId });
+          }
+          if (picture && user.avatar !== picture) user.avatar = picture;
+          await user.save();
+        } else {
+          console.error("[SOCIAL] create user error:", e);
+          return res.status(500).json({ message: "Create user failed" });
+        }
+      }
+    } else {
+      // Có user: cập nhật provider nếu thiếu
+      if (
+        !user.socialLogins.some(
+          (s) => s.provider === provider && s.providerId === providerId
+        )
+      ) {
+        user.socialLogins.push({ provider, providerId });
+      }
+      if (picture && user.avatar !== picture) user.avatar = picture;
+      await user.save();
+    }
+
+    const token = generateToken(user._id);
+
+    return res.json({
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        avatar: user.avatar,
+        role: user.role,
+        providers: user.socialLogins.map((s) => s.provider)
+      }
+    });
+  } catch (e) {
+    console.error("socialLogin outer error:", e);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
 
 exports.register = async (req, res) => {
   try {
@@ -130,10 +228,19 @@ exports.updateMe = async (req, res) => {
   }
 };
 
+
+function sortAddresses(addresses) {
+  return [...addresses].sort((a,b) => Number(b.isDefault) - Number(a.isDefault));
+}
+
 exports.getAddresses = async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("addresses");
-    res.json(user.addresses);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    const sorted = [...user.addresses].sort((a, b) => b.isDefault - a.isDefault);
+    res.json(sorted);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -142,6 +249,8 @@ exports.getAddresses = async (req, res) => {
 exports.addAddress = async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
     const newAddress = {
       receiverName: req.body.receiverName,
       phone: req.body.phone,
@@ -149,21 +258,26 @@ exports.addAddress = async (req, res) => {
       city: req.body.city,
       district: req.body.district,
       ward: req.body.ward,
-      isDefault: req.body.isDefault || false
+      isDefault: !!req.body.isDefault
     };
 
     if (newAddress.isDefault) {
-      user.addresses.forEach(addr => (addr.isDefault = false));
+      user.addresses.forEach(a => a.isDefault = false);
+    } else {
+      if (!user.addresses.some(a => a.isDefault)) {
+        newAddress.isDefault = true;
+      }
     }
 
     user.addresses.push(newAddress);
     await user.save();
 
-    res.status(201).json(user.addresses);
+    return res.status(201).json(sortAddresses(user.addresses));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
+
 
 exports.updateAddress = async (req, res) => {
   try {
@@ -187,13 +301,21 @@ exports.updateAddress = async (req, res) => {
 exports.deleteAddress = async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
     const address = user.addresses.id(req.params.addressId);
     if (!address) return res.status(404).json({ message: "Address not found" });
 
+    const wasDefault = address.isDefault;
     address.deleteOne();
-    await user.save();
 
-    res.json(user.addresses);
+    // Nếu vừa xóa default và còn địa chỉ khác, gán cái đầu tiên làm default
+    if (wasDefault && user.addresses.length > 0 && !user.addresses.some(a => a.isDefault)) {
+      user.addresses[0].isDefault = true;
+    }
+
+    await user.save();
+    return res.json(sortAddresses(user.addresses));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

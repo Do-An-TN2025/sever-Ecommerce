@@ -53,12 +53,8 @@ const STOPWORDS = new Set([
   "cần","muốn","mua","giá","gia","cái","chiếc","hãng","hang","cái","mẫu","mau"
 ]);
 
-// BỔ SUNG GENERIC_WORDS & DISTINCTIVE FILTER (nếu chưa có)
-
-
 function escapeRegex(str) { return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
-// Thêm hàm bỏ dấu & chuẩn hóa
 function stripDiacritics(str) {
   return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
