@@ -13,7 +13,7 @@ app.use("/api/products", require("./src/routes/productRoutes"));
 app.use("/api/variants", require("./src/routes/variantRoutes"));
 app.use("/api/chat", require("./src/routes/chatRoutes"));
 app.use("/api/cart", require("./src/routes/cartRoutes"));
-
+app.use ("/api/orders", require("./src/routes/orderRoutes"));
 // Global error handler (sau cùng)
 app.use((err, req, res, next) => {
   console.error('Error:', err);
