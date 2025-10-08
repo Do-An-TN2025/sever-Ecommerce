@@ -41,6 +41,7 @@ const PaymentMethodSchema = new mongoose.Schema({
 const OrderSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   guestInfo: GuestInfoSchema,
+  orderCode: { type: String, required: true, unique: true },
   items: { type: [OrderItemSchema], validate: v => v.length > 0 },
   shippingAddress: ShippingAddressSchema,
   paymentMethod: PaymentMethodSchema,
