@@ -9,7 +9,8 @@ app.use(cors({
   origin: [process.env.CLIENT_URL, "http://localhost:3000"],
   credentials: true
 }));
-
+const corstest=process.env.CLIENT_URL;
+console.log('Test CORS DEPLOYD:', corstest);
 // Routes
 app.use("/api/users", require("./src/routes/userRoutes"));
 app.use("/api/categories", require("./src/routes/categoryRoutes"));
