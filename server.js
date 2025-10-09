@@ -4,7 +4,11 @@ const { ENV, connectDB } = require("./src/config");
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const app = express();
 app.use(express.json());
-app.use(cors({ origin: ENV.CLIENT_URL, credentials: true }));
+
+app.use(cors({
+  origin: [process.env.CLIENT_URL, "http://localhost:3000"],
+  credentials: true
+}));
 
 // Routes
 app.use("/api/users", require("./src/routes/userRoutes"));
@@ -23,3 +27,4 @@ app.use((err, req, res, next) => {
 connectDB().then(() => {
   app.listen(ENV.PORT, () => console.log(`Server on ${ENV.PORT}`));
 });
+

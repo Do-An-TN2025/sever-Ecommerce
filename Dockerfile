@@ -16,8 +16,6 @@ COPY . .
 # Biến môi trường (Render sẽ override bằng .env)
 ENV NODE_ENV=production
 
-# Mở port
-EXPOSE 10000
 
 # Chạy server
 CMD ["npm", "start"]
