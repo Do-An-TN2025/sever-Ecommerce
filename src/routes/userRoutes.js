@@ -8,9 +8,21 @@ const {
     deleteAddress,
     setDefaultAddress,
     registerAdmin,
-    socialLogin
+    socialLogin,
+    addToWishlist,
+    removeFromWishlist,
+    getWishlist
 } = require("../controllers/userController");
+
+
+
 const {authMiddleware , adminOnly} = require("../middlewares/authMiddleware");
+
+
+// api wishlist
+router.get("/wishlist", authMiddleware, getWishlist);
+router.post("/wishlist", authMiddleware, addToWishlist);
+router.delete("/wishlist", authMiddleware, removeFromWishlist);
 
 router.post("/social-login" , socialLogin);
 router.post("/register", register);

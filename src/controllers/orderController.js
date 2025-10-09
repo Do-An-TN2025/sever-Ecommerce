@@ -188,10 +188,11 @@ exports.createOrder = async (req, res) => {
 
 exports.handlePayOSWebhook = async (req, res) => {
   try {
+
     const payload = req.body;
     console.log("PayOS Webhook received:", payload);
-
-    const order = await Order.findOne({ orderCode: payload.orderCode });
+    const orderCode = payload.orderCode || payload.data?.orderCode;
+    const order = await Order.findOne({ orderCode });
     if (!order) {
       console.log("Order not found:", payload.orderCode);
       return res.status(200).json({ message: "Không tìm thấy đơn" });
