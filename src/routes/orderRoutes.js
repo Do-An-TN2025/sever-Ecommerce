@@ -16,7 +16,7 @@ router.post("/payos/webhook", handlePayOSWebhook);
 router.get("/",authMiddleware,getMyOrders);
 router.get("/:id", authMiddleware, getOrderById);
 
-router.get('/payment-status/:orderCode', authMiddleware, checkPaymentStatus);
-router.post('/:id/cancel', authMiddleware, cancelOrder);
+router.get('/payment-status/:orderCode', checkPaymentStatus);
+router.post('/:id/cancel', cancelOrder);
 
 module.exports = router;
