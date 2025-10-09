@@ -1,3 +1,49 @@
+// Wishlist handlers
+exports.addToWishlist = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { productId } = req.body;
+    if (!productId) return res.status(400).json({ message: "Thiếu productId" });
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: "Không tìm thấy user" });
+    if (user.wishlist.includes(productId)) {
+      return res.status(400).json({ message: "Sản phẩm đã có trong wishlist" });
+    }
+    user.wishlist.push(productId);
+    await user.save();
+    res.json({ message: "Đã thêm vào wishlist", wishlist: user.wishlist });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi thêm wishlist" });
+  }
+};
+
+exports.removeFromWishlist = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { productId } = req.body;
+    if (!productId) return res.status(400).json({ message: "Thiếu productId" });
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: "Không tìm thấy user" });
+    user.wishlist = user.wishlist.filter(
+      (id) => id.toString() !== productId.toString()
+    );
+    await user.save();
+    res.json({ message: "Đã xóa khỏi wishlist", wishlist: user.wishlist });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi xóa wishlist" });
+  }
+};
+
+exports.getWishlist = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const user = await User.findById(userId).populate("wishlist");
+    if (!user) return res.status(404).json({ message: "Không tìm thấy user" });
+    res.json({ wishlist: user.wishlist });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi lấy wishlist" });
+  }
+};
 const User = require("../models/User");
 const generateToken = require("../utils/generateToken");
 const { comparePassword, hashPassword } = require("../utils/hashPassword");
