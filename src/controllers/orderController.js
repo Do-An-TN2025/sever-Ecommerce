@@ -185,30 +185,6 @@ exports.createOrder = async (req, res) => {
   }
 };
 
-exports.getMyOrders = async (req, res) => {
-  try {
-    const orders = await Order.find({ userId: req.user.id }).sort({
-      createdAt: -1,
-    });
-    res.json(orders);
-  } catch (error) {
-    res.status(500).json({ message: "Không lấy được danh sách đơn hàng" });
-  }
-};
-
-exports.getOrderById = async (req, res) => {
-  try {
-    const order = await Order.findOne({
-      _id: req.params.id,
-      userId: req.user.id,
-    });
-    if (!order)
-      return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
-    res.json(order);
-  } catch (error) {
-    res.status(500).json({ message: "Không lấy được đơn hàng" });
-  }
-};
 
 exports.handlePayOSWebhook = async (req, res) => {
   try {
@@ -218,7 +194,7 @@ exports.handlePayOSWebhook = async (req, res) => {
     const order = await Order.findOne({ orderCode: payload.orderCode });
     if (!order) {
       console.log("Order not found:", payload.orderCode);
-      return res.status(404).json({ message: "Không tìm thấy đơn" });
+      return res.status(200).json({ message: "Không tìm thấy đơn" });
     }
 
     // Tránh xử lý trùng lặp
@@ -372,5 +348,30 @@ exports.cancelOrder = async (req, res) => {
   } catch (error) {
     console.error("cancelOrder error:", error);
     res.status(500).json({ message: "Lỗi hủy đơn hàng" });
+  }
+};
+
+exports.getMyOrders = async (req, res) => {
+  try {
+    const orders = await Order.find({ userId: req.user.id }).sort({
+      createdAt: -1,
+    });
+    res.json(orders);
+  } catch (error) {
+    res.status(500).json({ message: "Không lấy được danh sách đơn hàng" });
+  }
+};
+
+exports.getOrderById = async (req, res) => {
+  try {
+    const order = await Order.findOne({
+      _id: req.params.id,
+      userId: req.user.id,
+    });
+    if (!order)
+      return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
+    res.json(order);
+  } catch (error) {
+    res.status(500).json({ message: "Không lấy được đơn hàng" });
   }
 };
