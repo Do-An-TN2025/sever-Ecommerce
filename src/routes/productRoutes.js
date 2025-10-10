@@ -8,6 +8,7 @@ router.get("/default-variant", productController.getAllProductsWithDefaultVarian
 router.get("/search", productController.searchProducts);
 router.get("/details/:slug", productController.getProductDetailsBySlug);
 router.get("/:slug", productController.getProductBySlugCategory);
+router.get("/variant/details", productController.getVariantDetails);
 
 // Staff/Admin
 router.post("/add-product", authMiddleware, staffOrAdmin, productController.createProduct);

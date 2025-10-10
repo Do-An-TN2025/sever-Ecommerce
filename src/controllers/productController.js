@@ -709,6 +709,83 @@ exports.searchProducts = async (req, res) => {
   }
 };
 
+exports.getVariantDetails = async (req, res) => {
+  try {
+    const { variantId, size } = req.query;
+
+    if (!variantId) {
+      return res.status(400).json({ message: "Thiếu variantId" });
+    }
+
+    const variant = await ProductVariant.findById(variantId).lean();
+    if (!variant) {
+      return res.status(404).json({ message: "Không tìm thấy variant" });
+    }
+
+    const product = await Product.findById(variant.productId)
+      .populate("categoryId", "name slug")
+      .lean();
+
+    if (!product) {
+      return res.status(404).json({ message: "Không tìm thấy sản phẩm gốc" });
+    }
+
+    const sizeInfo = size
+      ? variant.sizes.find((s) => s.size.toLowerCase() === size.toLowerCase())
+      : null;
+
+    const formattedSizes = variant.sizes.map((s) => ({
+      size: s.size,
+      price: s.price,
+      discountPrice: s.discountPrice,
+      stock: s.stock,
+      finalPrice:
+        s.discountPrice && s.discountPrice > 0 ? s.discountPrice : s.price,
+      onSale: s.onSale,
+    }));
+
+    const response = {
+      product: {
+        _id: product._id,
+        name: product.name,
+        slug: product.slug,
+        shortDescription: product.shortDescription,
+        brand: product.brand,
+        category: product.categoryId,
+        rating: product.rating,
+      },
+      variant: {
+        _id: variant._id,
+        color: variant.color,
+        colorCode: variant.colorCode,
+        images: variant.images,
+        status: variant.status,
+        sizes: formattedSizes,
+      },
+      selectedSize: sizeInfo
+        ? {
+            size: sizeInfo.size,
+            price: sizeInfo.price,
+            discountPrice: sizeInfo.discountPrice,
+            stock: sizeInfo.stock,
+            finalPrice:
+              sizeInfo.discountPrice && sizeInfo.discountPrice > 0
+                ? sizeInfo.discountPrice
+                : sizeInfo.price,
+            onSale: sizeInfo.onSale,
+          }
+        : null,
+    };
+
+    return res.status(200).json(response);
+  } catch (err) {
+    console.error("❌ Lỗi khi lấy chi tiết variant:", err);
+    return res.status(500).json({
+      message: "Lỗi server khi lấy chi tiết variant",
+      error: err.message,
+    });
+  }
+};
 
 exports.getAllProducts = async (req, res) => {
   try {
