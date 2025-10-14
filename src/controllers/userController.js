@@ -37,13 +37,19 @@ exports.removeFromWishlist = async (req, res) => {
 exports.getWishlist = async (req, res) => {
   try {
     const userId = req.user.id;
-    const user = await User.findById(userId).populate("wishlist");
+    const user = await User.findById(userId)
+      .populate({
+        path: "wishlist",
+        populate: { path: "variants" }
+      });
     if (!user) return res.status(404).json({ message: "Không tìm thấy user" });
     res.json({ wishlist: user.wishlist });
   } catch (error) {
     res.status(500).json({ message: "Lỗi lấy wishlist" });
   }
 };
+
+
 const User = require("../models/User");
 const generateToken = require("../utils/generateToken");
 const { comparePassword, hashPassword } = require("../utils/hashPassword");

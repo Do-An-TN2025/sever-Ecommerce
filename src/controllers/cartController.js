@@ -8,77 +8,296 @@ function resolveIdentity(req) {
   const guestId = req.headers['x-cart-id'] || req.cookies?.cartId;
   return { type: 'guest', id: guestId || null };
 }
-
+function summarize(cart) {
+  const items = (cart?.items || []).map(i => (typeof i.toObject === 'function') ? i.toObject() : { ...i });
+  const itemCount = items.reduce((s, it) => s + (Number(it.quantity) || 0), 0);
+  const subtotal = items.reduce((s, it) => {
+    const finalPrice = Number(it.finalPrice ?? it.discountPrice ?? it.price ?? 0) || 0;
+    const qty = Number(it.quantity) || 0;
+    return s + (finalPrice * qty);
+  }, 0);
+  return { subtotal, itemCount };
+}
 async function getOrCreateCart(identity) {
   if (identity.type === 'user') {
     let cart = await Cart.findOne({ userId: identity.id });
     if (!cart) cart = await Cart.create({ userId: identity.id, items: [] });
     return cart;
   } else {
-    let cart = identity.id ? await Cart.findOne({ guestId: identity.id }) : null;
-    if (!cart) {
-      const gid = identity.id || uuidv4();
-      cart = await Cart.create({ guestId: gid, items: [] });
-      cart._newGuestId = gid;
+    // Nếu guestId có -> return hoặc tạo; nếu không có guestId -> KHÔNG auto-create
+    if (identity.id) {
+      let cart = await Cart.findOne({ guestId: identity.id });
+      if (!cart) cart = await Cart.create({ guestId: identity.id, items: [] });
+      return cart;
     }
-    return cart;
+    return null;
   }
 }
 
 exports.getCart = async (req, res) => {
-  const identity = resolveIdentity(req);
-  const cart = await getOrCreateCart(identity);
-  res.json({
-    cartId: cart.guestId || undefined,
-    userId: cart.userId || null,
-    items: cart.items,
-    totals: summarize(cart)
-  });
+  try {
+    console.log('getCart called - req.user:', req.user ? String(req.user._id) : null);
+    console.log('getCart - Authorization header:', !!req.headers.authorization);
+
+    const identity = resolveIdentity(req);
+    let cart = null;
+    if (identity.type === 'user') {
+      const queryUserId = req.query?.userId || null;
+      const targetUserId = (queryUserId && req.user?.role === 'admin') ? queryUserId : identity.id;
+      cart = await Cart.findOne({ userId: targetUserId });
+      if (!cart) {
+        return res.json({
+          cartId: undefined,
+          guestId: undefined,
+          userId: String(targetUserId),
+          items: [],
+          totals: { subtotal: 0, itemCount: 0 }
+        });
+      }
+    } else {
+      const guestId = identity.id;
+      if (!guestId) {
+        return res.json({
+          cartId: undefined,
+          guestId: undefined,
+          userId: null,
+          items: [],
+          totals: { subtotal: 0, itemCount: 0 }
+        });
+      }
+      cart = await Cart.findOne({ guestId });
+      if (!cart) {
+        return res.json({
+          cartId: undefined,
+          guestId,
+          userId: null,
+          items: [],
+          totals: { subtotal: 0, itemCount: 0 }
+        });
+      }
+    }
+
+    // Normalize items and dedupe by variantId + size
+    const raw = (cart.items || []).map(i => (typeof i.toObject === 'function') ? i.toObject() : { ...i });
+    const map = new Map();
+    for (const it of raw) {
+      const variantId = it.variantId ? String(it.variantId) : '';
+      const size = it.size || '';
+      if (!variantId) continue; // skip invalid items (schema expects variantId)
+      const key = `${variantId}||${size}`;
+      const qty = Number(it.quantity) || 1;
+      const price = Number(it.price) || 0;
+      const discountPrice = Number(it.discountPrice) || 0;
+      const finalPrice = Number(it.finalPrice) || (discountPrice > 0 ? discountPrice : price);
+
+      if (map.has(key)) {
+        const ex = map.get(key);
+        ex.quantity += qty;
+      } else {
+        map.set(key, {
+          _id: String(it._id || it.id || ''),
+          productId: it.productId ? String(it.productId) : null,
+          variantId,
+          size,
+          quantity: qty,
+          price,
+          discountPrice,
+          finalPrice,
+          name: it.name || ''
+        });
+      }
+    }
+
+    let items = Array.from(map.values());
+
+    // Fetch product & variant details in batch to avoid N+1 queries
+    try {
+      const productIds = [...new Set(items.map(i => i.productId).filter(Boolean))];
+      const variantIds = [...new Set(items.map(i => i.variantId).filter(Boolean))];
+
+      const [products, variants] = await Promise.all([
+        productIds.length ? Product.find({ _id: { $in: productIds } }).lean() : Promise.resolve([]),
+        variantIds.length ? ProductVariant.find({ _id: { $in: variantIds } }).lean() : Promise.resolve([])
+      ]);
+
+      const productMap = new Map(products.map(p => [String(p._id), p]));
+      const variantMap = new Map(variants.map(v => [String(v._id), v]));
+
+      // attach product & variant info (and size info) into each item
+      items = items.map(it => {
+        const prod = it.productId ? productMap.get(String(it.productId)) : null;
+        const varDoc = it.variantId ? variantMap.get(String(it.variantId)) : null;
+        const sizeInfo = varDoc?.sizes?.find(s => s.size === it.size) || null;
+
+        const productInfo = prod ? {
+          _id: String(prod._id),
+          name : prod.name || prod.title || '',
+          slug: prod.slug || '',
+        } : null;
+
+        const variantInfo = varDoc ? {
+          _id: String(varDoc._id),
+          sku: varDoc.sku || null,
+          status: varDoc.status || 'active',
+          images : varDoc.images[0] || [],
+          sizeInfo: sizeInfo ? {
+            size: sizeInfo.size,
+            price: Number(sizeInfo.price) || 0,
+            discountPrice: Number(sizeInfo.discountPrice) || 0,
+            stock: Number(sizeInfo.stock) || 0
+          } : null,
+          // include other variant-level fields if useful
+        } : null;
+
+        return {
+          ...it,
+          product: productInfo,
+          variant: variantInfo
+        };
+      });
+    } catch (e) {
+      // non-fatal: if product/variant lookup fails, continue returning basic items
+      console.warn('getCart - product/variant lookup failed', e.message);
+    }
+
+    const subtotal = items.reduce((s, it) => s + (it.finalPrice * it.quantity), 0);
+    const itemCount = items.reduce((s, it) => s + it.quantity, 0);
+
+    // Persist cleaned items back to DB if duplicates were present
+    if (items.length !== raw.length) {
+      // store only the minimal structure back to DB (avoid saving populated product/variant)
+      cart.items = items.map(i => ({
+        _id: i._id,
+        productId: i.productId,
+        variantId: i.variantId,
+        size: i.size,
+        quantity: i.quantity,
+        price: i.price,
+        discountPrice: i.discountPrice,
+        finalPrice: i.finalPrice,
+      }));
+      cart.updatedAt = new Date();
+      try { await cart.save(); } catch (err) { /* non-fatal */ }
+    }
+
+    return res.json({
+      cartId: cart._id ? String(cart._id) : undefined,
+      guestId: cart.guestId || undefined,
+      userId: cart.userId ? String(cart.userId) : null,
+      items,
+      totals: { subtotal, itemCount },
+      newGuestId: cart._newGuestId
+    });
+  } catch (err) {
+    console.error('getCart error', err);
+    return res.status(500).json({ message: 'Server error', error: err.message });
+  }
 };
 
-function summarize(cart) {
-  const subtotal = cart.items.reduce((s, it) => s + (it.finalPrice * it.quantity), 0);
-  return { subtotal, itemCount: cart.items.reduce((s,i)=>s+i.quantity,0) };
-}
-
 exports.addItem = async (req, res) => {
-  const { productId, variantId, size, quantity = 1 } = req.body;
-  if (!productId || !variantId || !size) return res.status(400).json({ message: 'Missing fields' });
-  const identity = resolveIdentity(req);
-  const cart = await getOrCreateCart(identity);
-  // validate variant + size
-  const variant = await ProductVariant.findById(variantId).lean();
-  if (!variant || String(variant.productId) !== String(productId)) return res.status(404).json({ message: 'Variant not found' });
-  const sizeObj = (variant.sizes || []).find(s => s.size === size);
-  if (!sizeObj) return res.status(400).json({ message: 'Size not found' });
-  if ((sizeObj.stock || 0) < quantity) return res.status(400).json({ message: 'Not enough stock' });
+  try {
+    const incoming = req.body || {};
+    const productId = incoming.productId || incoming.product_id;
+    const variantId = incoming.variantId || incoming.variant_id || null;
+    const size = incoming.size || null;
+    const qty = Number(incoming.quantity ?? incoming.qty ?? incoming.qty ?? 1) || 1;
+    const color = incoming.color || null;
+    const key = incoming.key || null;
+    const fallbackPrice = Number(incoming.price) || null;
+    const name = incoming.name || '';
 
-  const finalPrice = (sizeObj.discountPrice && sizeObj.discountPrice > 0) ? sizeObj.discountPrice : sizeObj.price;
+    if (!productId || !size) {
+      return res.status(400).json({ message: 'Missing productId or size' });
+    }
 
-  const existing = cart.items.find(i =>
-    String(i.variantId) === String(variantId) && i.size === size
-  );
-  if (existing) {
-    existing.quantity += quantity;
-  } else {
-    cart.items.push({
-      productId,
-      variantId,
-      size,
-      quantity,
-      price: sizeObj.price,
-      discountPrice: sizeObj.discountPrice,
-      finalPrice
+    const identity = resolveIdentity(req);
+    // nếu guest không có guestId, tạo guest cart LÚC add (không tạo ở GET)
+    let cart = await getOrCreateCart(identity);
+    if (identity.type === 'guest' && !cart) {
+      const gid = uuidv4();
+      cart = await Cart.create({ guestId: gid, items: [] });
+      cart._newGuestId = gid;
+    }
+    if (!cart) return res.status(500).json({ message: 'Failed to get or create cart' });
+
+    // Resolve variant: prefer explicit variantId; otherwise try to find by productId + size (+ color/key if present)
+    let variant = null;
+    if (variantId) {
+      variant = await ProductVariant.findById(variantId).lean();
+    } else {
+      const q = { productId };
+      if (color) q.color = color;
+      q['sizes.size'] = size;
+      variant = await ProductVariant.findOne(q).lean();
+      if (!variant) variant = await ProductVariant.findOne({ productId, 'sizes.size': size }).lean();
+    }
+
+    let price = fallbackPrice || 0;
+    let discountPrice = 0;
+    let finalPrice = fallbackPrice || 0;
+    if (variant) {
+      const sizeObj = (variant.sizes || []).find(s => s.size === size) || null;
+      if (!sizeObj) {
+        return res.status(400).json({ message: 'Size not found on variant' });
+      }
+      if ((sizeObj.stock || 0) < qty) return res.status(400).json({ message: 'Not enough stock' });
+
+      price = Number(sizeObj.price) || price || 0;
+      discountPrice = Number(sizeObj.discountPrice) || 0;
+      finalPrice = (discountPrice > 0) ? discountPrice : price;
+    } else {
+      if (!fallbackPrice) {
+        return res.status(400).json({ message: 'Variant not found and no price provided' });
+      }
+      price = fallbackPrice;
+      finalPrice = fallbackPrice;
+      discountPrice = Number(incoming.discountPrice) || 0;
+    }
+    let existing;
+    if (variant && variant._id) {
+      existing = cart.items.find(i => String(i.variantId) === String(variant._id) && i.size === size);
+    } else if (key) {
+      existing = cart.items.find(i => i.key === key && i.size === size);
+    } else {
+      existing = cart.items.find(i => String(i.productId) === String(productId) && i.size === size);
+    }
+
+    if (existing) {
+      existing.quantity = (existing.quantity || 0) + qty;
+    } else {
+      const newItem = {
+        productId,
+        variantId: variant?._id || null,
+        size,
+        quantity: qty,
+        price,
+        discountPrice,
+        finalPrice,
+        name
+      };
+      if (key) newItem.key = key;
+      if (color) newItem.color = color;
+      if (incoming.image) newItem.image = incoming.image;
+      cart.items.push(newItem);
+    }
+
+    cart.updatedAt = new Date();
+    await cart.save();
+
+    return res.json({
+      cartId: cart._id ? String(cart._id) : undefined,
+      guestId: cart.guestId || undefined,
+      items: cart.items,
+      totals: {
+        subtotal: cart.items.reduce((s, it) => s + ((it.finalPrice || 0) * (it.quantity || 1)), 0),
+        itemCount: cart.items.reduce((s, it) => s + (it.quantity || 0), 0)
+      },
+      newGuestId: cart._newGuestId
     });
+  } catch (err) {
+    console.error('addItem error', err);
+    return res.status(500).json({ message: 'Server error', error: err.message });
   }
-  cart.updatedAt = new Date();
-  await cart.save();
-  res.json({
-    cartId: cart.guestId || undefined,
-    items: cart.items,
-    totals: summarize(cart),
-    newGuestId: cart._newGuestId
-  });
 };
 
 exports.updateItem = async (req, res) => {
@@ -126,30 +345,90 @@ exports.clearCart = async (req, res) => {
 };
 
 exports.mergeCart = async (req, res) => {
-  // Call sau login: body { guestCartId }
-  const user = req.user;
-  if (!user) return res.status(401).json({ message: 'Auth required' });
-  const { guestCartId } = req.body;
-  if (!guestCartId) return res.status(400).json({ message: 'guestCartId required' });
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ message: "Auth required" });
 
-  const guestCart = await Cart.findOne({ guestId: guestCartId });
-  const userCart = await getOrCreateCart({ type: 'user', id: user._id });
+    const { items } = req.body;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: "items array required" });
+    }
 
-  if (guestCart && guestCart.items.length) {
-    guestCart.items.forEach(gItem => {
-      const ex = userCart.items.find(u =>
-        String(u.variantId) === String(gItem.variantId) && u.size === gItem.size
-      );
-      if (ex) {
-        ex.quantity += gItem.quantity;
+    const userCart = await getOrCreateCart({ type: "user", id: user._id });
+
+    for (const gItem of items) {
+      let incomingVariantId = gItem.variantId || null;
+      let productId = gItem.productId || null;
+      const size = gItem.size || null;
+      let qty = Number(gItem.quantity || gItem.qty || 1) || 1;
+
+      // Resolve variant/product when one is missing:
+      let variant;
+      if (incomingVariantId) {
+        variant = await ProductVariant.findById(incomingVariantId).lean();
+        if (variant && !productId) productId = variant.productId;
       } else {
-        userCart.items.push(gItem.toObject());
+        // try to find variant by productId + size
+        if (productId && size) {
+          variant = await ProductVariant.findOne({ productId, 'sizes.size': size }).lean();
+          if (variant) incomingVariantId = variant._id;
+        } else if (productId && !size) {
+          // fallback: pick any variant for product if size not provided
+          variant = await ProductVariant.findOne({ productId }).lean();
+          if (variant) incomingVariantId = variant._id;
+        } else if (!productId && size) {
+          // try to find a variant that has the requested size
+          variant = await ProductVariant.findOne({ 'sizes.size': size }).lean();
+          if (variant) {
+            incomingVariantId = variant._id;
+            productId = variant.productId;
+          }
+        }
       }
-    });
-    await guestCart.deleteOne();
-  }
 
-  userCart.updatedAt = new Date();
-  await userCart.save();
-  res.json({ items: userCart.items, totals: summarize(userCart) });
+      // If we still don't have a variantId (schema requires it), skip this item
+      if (!incomingVariantId) continue;
+
+      // derive pricing/stock from variant + size (if available)
+      let price, discountPrice, finalPrice;
+      if (variant) {
+        const sizeObj = (variant.sizes || []).find(s => s.size === size) || (variant.sizes && variant.sizes[0]);
+        if (sizeObj) {
+          price = sizeObj.price;
+          discountPrice = sizeObj.discountPrice;
+          finalPrice = (discountPrice && discountPrice > 0) ? discountPrice : price;
+          if ((sizeObj.stock || 0) < qty) qty = Math.max(1, sizeObj.stock || 1);
+        }
+      }
+
+      // merge by variantId + size
+      const ex = userCart.items.find(
+        (u) => String(u.variantId) === String(incomingVariantId) && (u.size || "") === (size || "")
+      );
+
+      if (ex) {
+        ex.quantity = (ex.quantity || 0) + qty;
+      } else {
+        userCart.items.push({
+          productId,
+          variantId: incomingVariantId,
+          size,
+          quantity: qty,
+          price,
+          discountPrice,
+          finalPrice,
+          name: gItem.name
+        });
+      }
+    }
+
+    userCart.updatedAt = new Date();
+    await userCart.save();
+
+    const totals = summarize(userCart);
+    return res.json({ items: userCart.items, totals, merged: true });
+  } catch (err) {
+    console.error("mergeCart error", err);
+    return res.status(500).json({ message: "Server error", error: err.message });
+  }
 };
