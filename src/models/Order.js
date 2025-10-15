@@ -1,3 +1,4 @@
+// ...existing code...
 const mongoose = require("mongoose");
 
 const OrderItemSchema = new mongoose.Schema({
@@ -8,7 +9,7 @@ const OrderItemSchema = new mongoose.Schema({
   color: String,
   size: String,
   quantity: { type: Number, required: true },
-  price: { type: Number, required: true },       // snapshot giá tại thời điểm đặt
+  price: { type: Number, required: true },    
   image: String
 }, { _id: false });
 
@@ -38,6 +39,12 @@ const PaymentMethodSchema = new mongoose.Schema({
   expiresAt: Date
 }, { _id: false });
 
+const VoucherSnapshotItemSchema = new mongoose.Schema({
+  productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
+  quantity: { type: Number, default: 1 },
+  lineTotal: { type: Number, default: 0 }
+}, { _id: false });
+
 const OrderSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   guestInfo: GuestInfoSchema,
@@ -55,7 +62,21 @@ const OrderSchema = new mongoose.Schema({
   discount: { type: Number, default: 0 },
   totalAmount: { type: Number, default: 0 },
   customerNote: String,
-  metadata: mongoose.Schema.Types.Mixed
+  metadata: mongoose.Schema.Types.Mixed,
+
+  voucher: {
+    voucherId: { type: mongoose.Schema.Types.ObjectId, ref: "Voucher", default: null },
+    code: { type: String, default: null },
+    type: { type: String, enum: ["percent", "fixed"], default: null },
+    value: { type: Number, default: 0 },
+    discountAmount: { type: Number, default: 0 },
+    totalBeforeVoucher: { type: Number, default: 0 },
+    totalAfterVoucher: { type: Number, default: 0 },
+    appliedItems: { type: [VoucherSnapshotItemSchema], default: [] },
+    redeemed: { type: Boolean, default: false },
+    redeemedAt: { type: Date, default: null }
+  }
+
 }, { timestamps: true });
 
 OrderSchema.index({ userId: 1, createdAt: -1 });
