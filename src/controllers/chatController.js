@@ -28,23 +28,25 @@ async function loadMeta() {
 }
 
 const GENERIC_WORDS = new Set([
-  "áo","ao","quần","quan","đồ","do","basic","chống","chong","nắng","nang",
+  "áo","ao","quần","quan","đồ","do","basic",
   "giày","giay","sandal","phụ","kien","thời","trang","thoi","trending","local","brand"
+
 ]);
 
 // ---- Constants / helpers ----
 const COLOR_ALIASES = {
-  "đen": ["đen", "black", "đen tuyền"],
-  "trắng": ["trắng", "white"],
-  "đỏ": ["đỏ", "red"],
-  "xanh dương": ["xanh dương", "xanh lam", "blue"],
-  "xanh lá": ["xanh lá", "green"],
-  "vàng": ["vàng", "yellow", "gold"],
-  "nâu": ["nâu", "brown"],
-  "xám": ["xám", "gray", "grey", "ghi", "silver"],
-  "tím": ["tím", "purple", "violet"],
-  "hồng": ["hồng", "pink"],
-  "cam": ["cam", "orange"]
+  "black": ["đen", "black", "đen tuyền"],
+  "white": ["trắng", "white"],
+  "red": ["đỏ", "red"],
+  "blue": ["xanh dương", "xanh lam", "blue"],
+  "green": ["xanh lá", "green"],
+  "yellow": ["vàng", "yellow", "gold"],
+  "brown": ["nâu", "brown"],
+  "gray": ["xám", "gray", "grey", "ghi", "silver"],
+  "purple": ["tím", "purple", "violet"],
+  "pink": ["hồng", "pink"],
+  "orange": ["cam", "orange"],
+  "navy" : ["xanh dương", "navy"] 
 };
 
 const STOPWORDS = new Set([
@@ -514,8 +516,6 @@ function cleanParsedKeywords(parsed) {
   if (!parsed.keywords.length) parsed.keywords = null;
 }
 
-// BỔ SUNG alias navy
-COLOR_ALIASES["xanh dương"].push("navy"); // hoặc tạo COLOR_ALIASES["navy"] = ["navy"]
 
 // Cache màu variant động
 let _variantColorCache = { ts:0, colors:[] };

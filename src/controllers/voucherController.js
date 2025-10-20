@@ -1,6 +1,20 @@
-// ...existing code...
 const Voucher = require('../models/Voucher');
 const Product = require('../models/Product');
+
+
+exports.getAllVouchers = async (req, res) => {
+  try {
+    const { active, q } = req.query;
+    const filter = {};
+    if (typeof active !== 'undefined') filter.active = active === 'true';
+    if (q) filter.code = { $regex: q.trim(), $options: 'i' };
+
+    const vouchers = await Voucher.find(filter).sort({ createdAt: -1 }).lean();
+    return res.json(vouchers);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
 
 exports.createVoucher = async (req, res) => {
   try {
@@ -12,65 +26,125 @@ exports.createVoucher = async (req, res) => {
   }
 };
 
-exports.applyVoucher = async (req, res) => {
+exports.deleteVoucher = async (req, res) => {
   try {
-    const { code, cartItems = [], orderTotal = 0 } = req.body;
-    const userId = req.user?.id;
+    const { id } = req.params;
+    const deleted = await Voucher.findByIdAndDelete(id);
+    if (!deleted) return res.status(404).json({ message: 'Không tìm thấy voucher' });
+    return res.json({ message: 'Đã xóa voucher', id: deleted._id });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+exports.updateVoucher = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = { ...req.body };
+    if (data.code) data.code = data.code.toString().trim().toUpperCase();
 
-    const voucher = await Voucher.findOne({ code: (code || '').toUpperCase(), active: true });
-    if (!voucher) return res.status(404).json({ message: 'Voucher không tồn tại hoặc đã vô hiệu' });
+    const updated = await Voucher.findByIdAndUpdate(id, data, { new: true, runValidators: true });
+    if (!updated) return res.status(404).json({ message: 'Không tìm thấy voucher' });
+    return res.json(updated);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
 
-    const now = new Date();
-    if (now < voucher.startAt || now > voucher.endAt) return res.status(400).json({ message: 'Voucher không còn hiệu lực' });
+exports.applyVoucher = async (req, res, next) => {
+  try {
+    // normalize incoming code safely
+    const raw = req.body?.code;
+    // convert object/number/event => string safely
+    const code = String(
+      (typeof raw === 'object' && raw !== null)
+        ? (raw.code ?? raw.value ?? '')
+        : (raw ?? '')
+    ).trim().toUpperCase();
 
-    if (voucher.usageLimit !== null && voucher.usedCount >= voucher.usageLimit) {
-      return res.status(400).json({ message: 'Voucher đã hết lượt sử dụng' });
+    // debug log (tắt hoặc remove khi fixed)
+    console.log('applyVoucher incoming raw:', raw, 'normalized code:', code, 'type raw:', typeof raw);
+
+    if (!code) return res.status(400).json({ success: false, message: 'Mã voucher bắt buộc' });
+
+    // tiếp tục xử lý với `code` an toàn
+    const voucher = await Voucher.findOne({ code, active: true });
+    if (!voucher) return res.status(404).json({ success: false, message: 'Mã không tồn tại' });
+
+    const orderTotal = Number(req.body.orderTotal || 0);
+    if (voucher.minAmount && orderTotal < voucher.minAmount) {
+      return res.status(400).json({ success: false, message: `Yêu cầu tối thiểu ${voucher.minAmount}` });
+    }
+    if (voucher.expiresAt && new Date() > new Date(voucher.expiresAt)) {
+      return res.status(400).json({ success: false, message: 'Mã đã hết hạn' });
     }
 
-    // per user limit check
-    const userRecord = voucher.usersUsed.find(u => u.user.toString() === (userId || '').toString());
-    if (userRecord && voucher.perUserLimit !== null && userRecord.count >= voucher.perUserLimit) {
-      return res.status(400).json({ message: 'Bạn đã sử dụng voucher này quá số lần cho phép' });
-    }
-
-    // check min order
-    if (orderTotal < (voucher.minOrderValue || 0)) {
-      return res.status(400).json({ message: `Đơn hàng phải tối thiểu ${voucher.minOrderValue}` });
-    }
-
-    // Optional: áp dụng theo sản phẩm/danh mục -> tính subTotal áp dụng
-    let applicableAmount = orderTotal;
-    if ((voucher.applicableProducts && voucher.applicableProducts.length) ||
-        (voucher.applicableCategories && voucher.applicableCategories.length)) {
-      // Tính tổng các item thỏa điều kiện (giả sử cartItems có product, quantity, price, category)
-      applicableAmount = 0;
-      for (const item of cartItems) {
-        const prodId = item.product?.toString();
-        const inProducts = voucher.applicableProducts?.some(p => p.toString() === prodId);
-        const inCategories = voucher.applicableCategories?.some(c => c.toString() === (item.category || '').toString());
-        if (inProducts || inCategories) {
-          applicableAmount += item.price * (item.quantity || 1);
-        }
-      }
-      if (applicableAmount === 0) return res.status(400).json({ message: 'Voucher không áp dụng cho sản phẩm trong giỏ' });
-    }
-
-    // Tính tiền giảm
     let discount = 0;
-    if (voucher.type === 'percent') {
-      discount = (applicableAmount * voucher.value) / 100;
-      if (voucher.maxDiscount) discount = Math.min(discount, voucher.maxDiscount);
-    } else {
-      discount = Math.min(voucher.value, applicableAmount);
-    }
+    if (voucher.type === 'percent') discount = Math.floor((orderTotal * (voucher.value || 0)) / 100);
+    else discount = voucher.value || 0;
 
-    const newTotal = Math.max(0, orderTotal - discount);
+    const totalAfter = Math.max(0, orderTotal - discount);
 
     return res.json({
-      code: voucher.code,
-      discount,
-      newTotal
+      success: true,
+      data: {
+        voucher: {
+          id: voucher._id,
+          code: voucher.code,
+          title: voucher.title || voucher.code,
+          type: voucher.type,
+          value: voucher.value,
+          minAmount: voucher.minAmount || 0,
+          expiresAt: voucher.expiresAt || null
+        },
+        discount,
+        totalBefore: orderTotal,
+        totalAfter
+      }
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getUserVouchers = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const now = new Date();
+
+    const vouchers = await Voucher.find({
+      active: true,
+      startAt: { $lte: now },
+      endAt: { $gte: now }
+    }).lean();
+
+    const result = vouchers.map(v => {
+      const usedRecord = (v.usersUsed || []).find(u => u.user?.toString() === (userId || '').toString());
+      const perUserUsed = usedRecord ? usedRecord.count : 0;
+      const exhausted = v.usageLimit !== null && (v.usedCount || 0) >= v.usageLimit;
+      const perUserExceeded = v.perUserLimit !== null && perUserUsed >= v.perUserLimit;
+
+      return {
+        _id: v._id,
+        code: v.code,
+        type: v.type,
+        value: v.value,
+        maxDiscount: v.maxDiscount,
+        startAt: v.startAt,
+        endAt: v.endAt,
+        minOrderValue: v.minOrderValue,
+        applicableProducts: v.applicableProducts || [],
+        applicableCategories: v.applicableCategories || [],
+        usageLimit: v.usageLimit,
+        usedCount: v.usedCount || 0,
+        perUserLimit: v.perUserLimit,
+        perUserUsed,
+        exhausted,
+        perUserExceeded,
+        usable: !exhausted && !perUserExceeded
+      };
+    });
+
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
@@ -78,11 +152,12 @@ exports.applyVoucher = async (req, res) => {
 
 exports.redeemVoucher = async (req, res) => {
   try {
-    const { code } = req.body;
-    const userId = req.user.id;
+    const rawCode = req.body.code;
+    const code = String(rawCode || '').trim().toUpperCase();
+    const userId = req.user?.id;
     if (!code) return res.status(400).json({ message: 'code required' });
 
-    const voucher = await Voucher.findOne({ code: code.toUpperCase(), active: true });
+    const voucher = await Voucher.findOne({ code, active: true });
     if (!voucher) return res.status(404).json({ message: 'Voucher không tồn tại' });
 
     voucher.usedCount = (voucher.usedCount || 0) + 1;
