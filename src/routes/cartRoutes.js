@@ -3,11 +3,11 @@ const router = express.Router();
 const ctrl = require('../controllers/cartController');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 
-router.get('/', ctrl.getCart);
-router.post('/add', ctrl.addItem);
-router.patch('/item/:itemId', ctrl.updateItem);
-router.delete('/item/:itemId', ctrl.removeItem);
-router.delete('/clear', ctrl.clearCart);
+router.get('/', authMiddleware , ctrl.getCart);
+router.post('/add', authMiddleware , ctrl.addItem);
+router.patch('/item/:itemId', authMiddleware , ctrl.updateItem);
+router.delete('/item/:itemId', authMiddleware , ctrl.removeItem);
+router.delete('/clear', authMiddleware , ctrl.clearCart);
 
 
 router.post('/merge',authMiddleware ,ctrl.mergeCart);

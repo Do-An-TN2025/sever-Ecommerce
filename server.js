@@ -16,9 +16,10 @@ app.use("/api/users", require("./src/routes/userRoutes"));
 app.use("/api/categories", require("./src/routes/categoryRoutes"));
 app.use("/api/products", require("./src/routes/productRoutes"));
 app.use("/api/variants", require("./src/routes/variantRoutes"));
-app.use("/api/chat", require("./src/routes/chatRoutes"));
+app.use("/api/chat", require("./src/routes/chatRoutes")); 
 app.use("/api/cart", require("./src/routes/cartRoutes"));
 app.use ("/api/orders", require("./src/routes/orderRoutes"));
+app.use("/api/vouchers", require("./src/routes/voucherRoutes"));
 
 app.use((err, req, res, next) => {
   console.error('Error:', err);
