@@ -138,6 +138,7 @@ exports.createOrder = async (req, res) => {
       shippingAddress: {
         fullName: shippingAddress.fullName,
         phone: shippingAddress.phone,
+        email: guestInfo.email || req.body.contactEmail || shippingAddress.email || null,
         addressLine1: shippingAddress.addressLine || shippingAddress.addressLine1 || "",
         addressLine2: shippingAddress.addressLine2 || "",
         ward: shippingAddress.ward || "",
@@ -175,6 +176,7 @@ exports.createOrder = async (req, res) => {
 
     // Non-PayOS: create order immediately
     if (paymentMethod.type !== "PayOS") {
+      baseOrder.orderCode = generateOrderCode();
       const order = await Order.create(baseOrder);
       if (userId) {
         await Cart.updateOne(

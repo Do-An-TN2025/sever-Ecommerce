@@ -16,6 +16,7 @@ const OrderItemSchema = new mongoose.Schema({
 const ShippingAddressSchema = new mongoose.Schema({
   fullName: { type: String, required: true },
   phone: { type: String, required: true },
+  email: String,
   addressLine1: { type: String, required: true },
   addressLine2: String,
   ward: String,
