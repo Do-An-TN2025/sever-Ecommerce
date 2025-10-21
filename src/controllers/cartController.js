@@ -36,9 +36,6 @@ async function getOrCreateCart(identity) {
 
 exports.getCart = async (req, res) => {
   try {
-    console.log('getCart called - req.user:', req.user ? String(req.user._id) : null);
-    console.log('getCart - Authorization header:', !!req.headers.authorization);
-
     const identity = resolveIdentity(req);
     let cart = null;
     if (identity.type === 'user') {
@@ -151,6 +148,7 @@ exports.getCart = async (req, res) => {
 
         return {
           ...it,
+          name: productInfo?.name || it.name || '',
           product: productInfo,
           variant: variantInfo
         };
@@ -162,6 +160,7 @@ exports.getCart = async (req, res) => {
 
     const subtotal = items.reduce((s, it) => s + (it.finalPrice * it.quantity), 0);
     const itemCount = items.reduce((s, it) => s + it.quantity, 0);
+    const names = items.map(i => i.product?.name || i.name || '');
 
     // Persist cleaned items back to DB if duplicates were present
     if (items.length !== raw.length) {
@@ -172,6 +171,7 @@ exports.getCart = async (req, res) => {
         variantId: i.variantId,
         size: i.size,
         quantity: i.quantity,
+        name: i.name || '',
         price: i.price,
         discountPrice: i.discountPrice,
         finalPrice: i.finalPrice,
