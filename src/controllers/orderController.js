@@ -116,8 +116,9 @@ exports.createOrder = async (req, res) => {
     const subtotal = orderItems.reduce((sum, item) => sum + (item.price || 0) * (item.quantity || 0), 0);
     const shippingFee = Number(req.body.shippingFee || 0);
 
-    const userId = req.user?.id || null;
-
+   const userId = req.user?.id || req.user?._id || req.user?.userId || null;
+    console.log("Auth header:", req.headers.authorization);
+    console.log("req.user:", userId);
     // voucher handling
     let voucherSnapshot = null;
     let discount = 0;
@@ -393,6 +394,8 @@ exports.cancelOrder = async (req, res) => {
     const { id } = req.params;
     const userId = req.user?.id;
 
+
+    
     const order = await Order.findOne({ _id: id, ...(userId && { userId }) });
     if (!order) return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
     if (order.orderStatus !== "pending") return res.status(400).json({ message: "Chỉ có thể hủy đơn hàng đang chờ xử lý" });
@@ -422,8 +425,36 @@ exports.cancelOrder = async (req, res) => {
 
 exports.getMyOrders = async (req, res) => {
   try {
-    const orders = await Order.find({ userId: req.user.id }).sort({ createdAt: -1 });
-    res.json(orders);
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, parseInt(req.query.limit) || 10);
+    const status = req.query.status; // optional: filter by orderStatus
+    const sortBy = req.query.sortBy || "createdAt";
+    const sortOrder = req.query.sortOrder === "asc" ? 1 : -1;
+
+    const filter = { userId };
+    if (status) filter.orderStatus = status;
+
+    const total = await Order.countDocuments(filter);
+    const orders = await Order.find(filter)
+      .sort({ [sortBy]: sortOrder })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate("items.productId", "name slug")
+      .populate("items.variantId", "color colorCode sizes images")
+      .lean();
+
+    res.json({
+      meta: {
+        total,
+        page,
+        limit,
+        pages: Math.ceil(total / limit)
+      },
+      data: orders
+    });
   } catch (error) {
     console.error("getMyOrders error:", error);
     res.status(500).json({ message: "Không lấy được danh sách đơn hàng" });

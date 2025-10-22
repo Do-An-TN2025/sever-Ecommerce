@@ -8,11 +8,12 @@ const {
   checkPaymentStatus,
   cancelOrder
 } = require("../controllers/orderController");
-const { authMiddleware } = require("../middlewares/authMiddleware");
+const { authMiddleware , authOptional } = require("../middlewares/authMiddleware");
 
 
-router.post("/create-orders",  createOrder);
+router.post("/create-orders", authOptional, createOrder);
 router.post("/payos/webhook", handlePayOSWebhook);
+
 router.get("/",authMiddleware,getMyOrders);
 router.get("/:id", authMiddleware, getOrderById);
 
