@@ -15,5 +15,7 @@ router.post("/add-product", authMiddleware, staffOrAdmin, productController.crea
 router.put("/:id", authMiddleware, staffOrAdmin, productController.updateProduct);
 router.delete("/:id", authMiddleware, staffOrAdmin, productController.deleteProduct);
 
+// Public
+router.get("/ml-recommend", productController.mlRecommend);
 
 module.exports = router;

@@ -1,6 +1,7 @@
 const Product = require("../models/Product");
 const Category = require("../models/Category");
 const ProductVariant = require("../models/ProductVariant");
+const mlService = require("../services/mlRecommenderService");
 
 exports.createProduct = async (req, res) => {
   try {
@@ -863,5 +864,16 @@ exports.getAllProductsWithDefaultVariant = async (req, res) => {
         details: err.message,
       },
     });
+  }
+};
+
+exports.mlRecommend = async (req, res) => {
+  try {
+    const limit = Number(req.query.limit) || 12;
+    const recs = await mlService.getCfRecommendationsForUser(req.user?.id, limit);
+    return res.json({ recommendations: recs });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ message: "Error getting ML recommendations" });
   }
 };
