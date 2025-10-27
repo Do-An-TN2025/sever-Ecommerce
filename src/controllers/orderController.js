@@ -116,8 +116,9 @@ exports.createOrder = async (req, res) => {
     const subtotal = orderItems.reduce((sum, item) => sum + (item.price || 0) * (item.quantity || 0), 0);
     const shippingFee = Number(req.body.shippingFee || 0);
 
-    const userId = req.user?.id || null;
-
+   const userId = req.user?.id || req.user?._id || req.user?.userId || null;
+    console.log("Auth header:", req.headers.authorization);
+    console.log("req.user:", userId);
     // voucher handling
     let voucherSnapshot = null;
     let discount = 0;
@@ -393,6 +394,8 @@ exports.cancelOrder = async (req, res) => {
     const { id } = req.params;
     const userId = req.user?.id;
 
+
+    
     const order = await Order.findOne({ _id: id, ...(userId && { userId }) });
     if (!order) return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
     if (order.orderStatus !== "pending") return res.status(400).json({ message: "Chỉ có thể hủy đơn hàng đang chờ xử lý" });
@@ -422,8 +425,36 @@ exports.cancelOrder = async (req, res) => {
 
 exports.getMyOrders = async (req, res) => {
   try {
-    const orders = await Order.find({ userId: req.user.id }).sort({ createdAt: -1 });
-    res.json(orders);
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, parseInt(req.query.limit) || 10);
+    const status = req.query.status; // optional: filter by orderStatus
+    const sortBy = req.query.sortBy || "createdAt";
+    const sortOrder = req.query.sortOrder === "asc" ? 1 : -1;
+
+    const filter = { userId };
+    if (status) filter.orderStatus = status;
+
+    const total = await Order.countDocuments(filter);
+    const orders = await Order.find(filter)
+      .sort({ [sortBy]: sortOrder })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate("items.productId", "name slug")
+      .populate("items.variantId", "color colorCode sizes images")
+      .lean();
+
+    res.json({
+      meta: {
+        total,
+        page,
+        limit,
+        pages: Math.ceil(total / limit)
+      },
+      data: orders
+    });
   } catch (error) {
     console.error("getMyOrders error:", error);
     res.status(500).json({ message: "Không lấy được danh sách đơn hàng" });
@@ -438,5 +469,200 @@ exports.getOrderById = async (req, res) => {
   } catch (error) {
     console.error("getOrderById error:", error);
     res.status(500).json({ message: "Không lấy được đơn hàng" });
+  }
+};
+
+
+
+exports.getOrdersAdmin = async (req, res) => {
+  try {
+    // authorization: chỉ admin (guess: req.user.role)
+    if (req.user?.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, parseInt(req.query.limit) || 20);
+    const sortBy = req.query.sortBy || "createdAt";
+    const sortOrder = req.query.sortOrder === "asc" ? 1 : -1;
+
+    const {
+      status,            // orderStatus
+      paymentStatus,     // paymentMethod.status
+      orderCode,         // exact or partial
+      userId,            // filter by user
+      q,                 // general text search
+      dateFrom,
+      dateTo
+    } = req.query;
+
+    const filter = {};
+
+    if (status) filter.orderStatus = status;
+    if (paymentStatus) filter["paymentMethod.status"] = paymentStatus;
+    if (userId) filter.userId = userId;
+    if (orderCode) filter.orderCode = new RegExp(orderCode, "i");
+
+    if (q) {
+      const r = new RegExp(q, "i");
+      filter.$or = [
+        { "shippingAddress.fullName": r },
+        { "shippingAddress.phone": r },
+        { "shippingAddress.email": r },
+        { customerNote: r },
+        { orderCode: r },
+        { "items.name": r }
+      ];
+    }
+
+    if (dateFrom || dateTo) {
+      filter.createdAt = {};
+      if (dateFrom) filter.createdAt.$gte = new Date(dateFrom);
+      if (dateTo) {
+        const d = new Date(dateTo);
+        // include whole day for dateTo (guess)
+        d.setHours(23,59,59,999);
+        filter.createdAt.$lte = d;
+      }
+      if (!Object.keys(filter.createdAt).length) delete filter.createdAt;
+    }
+
+    const total = await Order.countDocuments(filter);
+    const orders = await Order.find(filter)
+      .sort({ [sortBy]: sortOrder })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate("items.productId", "name slug")
+      .populate("items.variantId", "sku images color")
+      .populate("userId", "firstName lastName email")
+      .lean();
+
+    res.json({
+      meta: { total, page, limit, pages: Math.ceil(total / limit) },
+      data: orders
+    });
+  } catch (err) {
+    console.error("getOrdersAdmin error:", err);
+    res.status(500).json({ message: "Lỗi lấy danh sách đơn hàng" });
+  }
+};
+
+
+exports.updateOrderStatus = async (req, res) => {
+  try {
+    if (req.user?.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+
+    const { id } = req.params;
+    const { orderStatus, paymentStatus } = req.body; // both optional
+
+    const allowedStatuses = ["pending", "confirmed", "shipped", "delivered", "cancelled", "completed"];
+    const allowedPayment = ["pending", "paid", "failed", "cancelled"];
+
+    if (orderStatus && !allowedStatuses.includes(orderStatus)) {
+      return res.status(400).json({ message: "orderStatus không hợp lệ" });
+    }
+    if (paymentStatus && !allowedPayment.includes(paymentStatus)) {
+      return res.status(400).json({ message: "paymentStatus không hợp lệ" });
+    }
+
+    const order = await Order.findById(id);
+    if (!order) return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
+
+    const prevOrderStatus = order.orderStatus;
+    const prevPaymentStatus = order.paymentMethod?.status;
+
+    // If changing to paid (either via paymentStatus or orderStatus -> confirmed with paid)
+    const willBePaid = (paymentStatus === "paid") || (orderStatus === "confirmed" && prevPaymentStatus === "pending");
+
+    // If moving to cancelled
+    const willBeCancelled = orderStatus === "cancelled" || paymentStatus === "cancelled";
+
+    // Update requested fields
+    if (orderStatus) order.orderStatus = orderStatus;
+    if (paymentStatus) order.paymentMethod.status = paymentStatus;
+
+    // Handle paid flow: decrease stock and redeem voucher (similar to webhook)
+    if (willBePaid && prevPaymentStatus !== "paid") {
+      order.paymentMethod.paidAt = new Date();
+      try {
+        await decreaseStock(order.items);
+      } catch (err) {
+        console.error("decreaseStock error (admin update):", err);
+        // continue
+      }
+
+      if (order.voucher?.voucherId && !order.voucher?.redeemed) {
+        const session = await mongoose.startSession();
+        session.startTransaction();
+        try {
+          const v = await Voucher.findById(order.voucher.voucherId).session(session);
+          if (v) {
+            if (v.usageLimit === null || v.usedCount < v.usageLimit) {
+              v.usedCount = (v.usedCount || 0) + 1;
+              if (order.userId) {
+                const rec = v.usersUsed?.find(u => u.user?.toString() === order.userId?.toString());
+                if (rec) rec.count = (rec.count || 0) + 1;
+                else v.usersUsed = [...(v.usersUsed || []), { user: order.userId, count: 1 }];
+              }
+              await v.save({ session });
+              order.voucher.redeemed = true;
+              order.voucher.redeemedAt = new Date();
+              await order.save({ session });
+            } else {
+              console.warn("Voucher already exhausted at admin redeem time:", v.code);
+              await order.save({ session });
+            }
+          } else {
+            await order.save({ session });
+          }
+          await session.commitTransaction();
+        } catch (err) {
+          await session.abortTransaction();
+          console.error("Voucher redeem transaction error (admin):", err);
+          await order.save();
+        } finally {
+          session.endSession();
+        }
+      } else {
+        await order.save();
+      }
+    }
+
+    // Handle cancelled: restore stock and return items to user's cart
+    if (willBeCancelled && prevOrderStatus !== "cancelled") {
+      try {
+        await restoreStock(order.items);
+      } catch (err) {
+        console.error("restoreStock error (admin cancel):", err);
+      }
+
+      if (order.userId) {
+        const cartItems = order.items.map(item => ({
+          variantId: item.variantId,
+          productId: item.productId,
+          quantity: item.quantity,
+          size: item.size,
+          price: item.price,
+          discountPrice: item.discountPrice || item.price || 0,
+          finalPrice: item.finalPrice || item.price || 0,
+          name: item.name || ""
+        }));
+        try {
+          await Cart.updateOne(
+            { userId: order.userId },
+            { $push: { items: { $each: cartItems } } },
+            { upsert: true }
+          );
+        } catch (err) {
+          console.error("push back to cart error (admin):", err);
+        }
+      }
+    }
+
+    order.updatedAt = new Date();
+    await order.save();
+
+    res.json({ message: "Cập nhật trạng thái thành công", order });
+  } catch (error) {
+    console.error("updateOrderStatus error:", error);
+    res.status(500).json({ message: "Lỗi cập nhật trạng thái đơn hàng" });
   }
 };

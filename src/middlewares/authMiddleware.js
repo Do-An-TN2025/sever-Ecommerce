@@ -96,11 +96,31 @@ const ownerOrAdmin = async (req, res, next) => {
   }
 };
 
+
+
+const authOptional = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return next();
+  }
+  const token = authHeader.split(" ")[1];
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = await User.findById(decoded.id).select("_id email role status");
+    if (!req.user) return next();
+    if (req.user.status !== "active") return next();
+    return next();
+  } catch (err) {
+    return next();
+  }
+};
+
 module.exports = {
   authMiddleware,
   adminOnly,
   staffOrAdmin,
   customerOnly,
   requireRoles,
-  ownerOrAdmin
+  ownerOrAdmin,
+  authOptional
 };
