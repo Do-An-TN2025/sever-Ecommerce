@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const voucherCtrl = require('../controllers/VoucherController');
+const voucherCtrl = require('../controllers/voucherController');
 const {authMiddleware , adminOnly} = require("../middlewares/authMiddleware");
 
 router.post('/apply', authMiddleware , voucherCtrl.applyVoucher);
