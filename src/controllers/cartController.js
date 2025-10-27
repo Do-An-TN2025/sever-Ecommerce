@@ -308,7 +308,8 @@ exports.updateItem = async (req, res) => {
   const identity = resolveIdentity(req);
   const cart = await getOrCreateCart(identity);
 
-  const item = cart.items.id(itemId);
+  // robust lookup whether items are subdocs or plain objects
+  const item = (typeof cart.items.id === 'function') ? cart.items.id(itemId) : cart.items.find(i => String(i._id || i.id) === String(itemId));
   if (!item) return res.status(404).json({ message: 'Item not found' });
 
   // Check stock again
@@ -317,7 +318,15 @@ exports.updateItem = async (req, res) => {
   if (!sizeObj) return res.status(400).json({ message: 'Size missing now' });
   if (quantity > sizeObj.stock) return res.status(400).json({ message: 'Exceeds stock' });
 
-  item.quantity = quantity;
+  // if it's a plain object we need to write back to array element
+  if (typeof item.set === 'function') {
+    item.quantity = quantity; // mongoose subdoc
+  } else {
+    const idx = cart.items.findIndex(i => String(i._id || i.id) === String(itemId));
+    if (idx === -1) return res.status(404).json({ message: 'Item not found' });
+    cart.items[idx].quantity = quantity;
+  }
+
   cart.updatedAt = new Date();
   await cart.save();
   res.json({ items: cart.items, totals: summarize(cart) });
@@ -327,9 +336,26 @@ exports.removeItem = async (req, res) => {
   const { itemId } = req.params;
   const identity = resolveIdentity(req);
   const cart = await getOrCreateCart(identity);
-  const item = cart.items.id(itemId);
-  if (!item) return res.status(404).json({ message: 'Item not found' });
-  item.remove();
+
+  // robust removal whether subdoc or plain object
+  if (typeof cart.items.id === 'function') {
+    const item = cart.items.id(itemId);
+    if (!item) return res.status(404).json({ message: 'Item not found' });
+    // if subdoc has remove()
+    if (typeof item.remove === 'function') {
+      item.remove();
+    } else {
+      // fallback: splice by index
+      const idx = cart.items.findIndex(i => String(i._id || i.id) === String(itemId));
+      if (idx === -1) return res.status(404).json({ message: 'Item not found' });
+      cart.items.splice(idx, 1);
+    }
+  } else {
+    const idx = cart.items.findIndex(i => String(i._id || i.id) === String(itemId));
+    if (idx === -1) return res.status(404).json({ message: 'Item not found' });
+    cart.items.splice(idx, 1);
+  }
+
   cart.updatedAt = new Date();
   await cart.save();
   res.json({ items: cart.items, totals: summarize(cart) });
