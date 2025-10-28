@@ -20,7 +20,7 @@ app.use("/api/chat", require("./src/routes/chatRoutes"));
 app.use("/api/cart", require("./src/routes/cartRoutes"));
 app.use ("/api/orders", require("./src/routes/orderRoutes"));
 app.use("/api/vouchers", require("./src/routes/voucherRoutes"));
-
+app.use("/api", require("./src/routes/trainRoutes"));
 app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(err.status || 500).json({ message: err.message || 'Server error' });
