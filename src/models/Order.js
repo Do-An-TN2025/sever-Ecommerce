@@ -27,7 +27,7 @@ const ShippingAddressSchema = new mongoose.Schema({
 
 const GuestInfoSchema = new mongoose.Schema({
   fullName: { type: String, required: true },
-  email: String,
+  email: { type: String , required: true },
   phone: { type: String, required: true }
 }, { _id: false });
 

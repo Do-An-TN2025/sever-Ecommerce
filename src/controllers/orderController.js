@@ -10,6 +10,8 @@ const {
 } = require("../services/orderService");
 const { generateOrderCode } = require("../utils/orderUtils");
 require('dotenv').config();
+const { sendOrderCreatedEmail } = require("../services/emailService");
+
 
 const PAYOS_CLIENT_ID = process.env.PAYOS_CLIENT_ID;
 const PAYOS_API_KEY = process.env.PAYOS_API_KEY;
@@ -108,6 +110,7 @@ exports.createOrder = async (req, res) => {
     if (!shippingAddress?.fullName || !shippingAddress?.phone) {
       return res.status(400).json({ message: "Thiếu thông tin giao hàng" });
     }
+    if (!shippingAddress?.email && !guestInfo?.email && !req.body.contactEmail) return res.status(400).json({ message: "Thiếu email liên hệ" });
     if (!paymentMethod?.type) {
       return res.status(400).json({ message: "Thiếu phương thức thanh toán" });
     }
@@ -116,9 +119,10 @@ exports.createOrder = async (req, res) => {
     const subtotal = orderItems.reduce((sum, item) => sum + (item.price || 0) * (item.quantity || 0), 0);
     const shippingFee = Number(req.body.shippingFee || 0);
 
-   const userId = req.user?.id || req.user?._id || req.user?.userId || null;
+    const userId = req.user?.id || req.user?._id || req.user?.userId || null;
     console.log("Auth header:", req.headers.authorization);
     console.log("req.user:", userId);
+
     // voucher handling
     let voucherSnapshot = null;
     let discount = 0;
@@ -171,11 +175,10 @@ exports.createOrder = async (req, res) => {
       baseOrder.guestInfo = {
         fullName: guestName,
         phone: guestPhone,
-        email: guestInfo.email || req.body.contactEmail || null
+       email: guestInfo.email || req.body.contactEmail || shippingAddress.email || null
       };
     }
 
-    // Non-PayOS: create order immediately
     if (paymentMethod.type !== "PayOS") {
       baseOrder.orderCode = generateOrderCode();
       const order = await Order.create(baseOrder);
@@ -189,6 +192,15 @@ exports.createOrder = async (req, res) => {
           }
         );
       }
+
+      // Send confirmation email immediately for non-online payment
+      try {
+        const recipient = order.shippingAddress?.email || order.guestInfo?.email || null;
+        if (recipient) sendOrderCreatedEmail(order, recipient).catch(err => console.warn("Send order email failed:", err));
+      } catch (e) {
+        console.warn("send order email error:", e);
+      }
+
       return res.status(201).json({ order });
     }
 
@@ -230,7 +242,10 @@ exports.createOrder = async (req, res) => {
 
     const order = await Order.create(baseOrder);
 
-    if (userId) {
+    // DO NOT send email here for PayOS — wait for webhook confirmation
+    // Optional: if you want client to force finalize immediately, use req.body.finalize as before
+    const finalize = !!req.body.finalize;
+    if (userId && finalize === true) {
       await Cart.updateOne(
         { userId },
         {
@@ -250,7 +265,7 @@ exports.createOrder = async (req, res) => {
     });
   } catch (error) {
     console.error("createOrder error:", error);
-    res.status(500).json({ message: "Tạo đơn hàng thất bại" });
+     res.status(500).json({ message: error.message, stack: error.stack });
   }
 };
 
@@ -394,8 +409,6 @@ exports.cancelOrder = async (req, res) => {
     const { id } = req.params;
     const userId = req.user?.id;
 
-
-    
     const order = await Order.findOne({ _id: id, ...(userId && { userId }) });
     if (!order) return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
     if (order.orderStatus !== "pending") return res.status(400).json({ message: "Chỉ có thể hủy đơn hàng đang chờ xử lý" });
@@ -663,5 +676,41 @@ exports.updateOrderStatus = async (req, res) => {
   } catch (error) {
     console.error("updateOrderStatus error:", error);
     res.status(500).json({ message: "Lỗi cập nhật trạng thái đơn hàng" });
+  }
+};
+
+exports.confirmOrderByToken = async (req, res) => {
+  try {
+    const { token } = req.query;
+    if (!token) return res.status(400).json({ message: 'Token required' });
+
+    const order = await Order.findOne({ 'confirmation.token': token });
+    if (!order) return res.status(404).json({ message: 'Order không tồn tại' });
+
+    if (order.confirmation.confirmed) return res.status(200).json({ message: 'Đã xác nhận' });
+    if (new Date() > new Date(order.confirmation.expiresAt)) {
+      order.orderStatus = 'cancelled';
+      order.confirmation.confirmed = false;
+      await order.save();
+      return res.status(410).json({ message: 'Token hết hạn, đơn đã hủy' });
+    }
+    order.confirmation.confirmed = true;
+    order.unconfirmed = false;
+    order.paymentMethod.status = 'pending';
+    await order.save();
+
+    try { await decreaseStock(order.items); } catch(e){ console.warn('decreaseStock', e); }
+    if (order.userId) {
+      await Cart.updateOne({ userId: order.userId }, { $pull: { items: { variantId: { $in: order.items.map(i => i.variantId) } } } });
+    }
+
+    // send order created email
+    const recipient = order.shippingAddress?.email || order.guestInfo?.email || null;
+    if (recipient) sendOrderCreatedEmail(order, recipient).catch(e => console.warn('send order email failed', e));
+
+    return res.json({ message: 'Xác nhận thành công', order });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: 'Lỗi server' });
   }
 };

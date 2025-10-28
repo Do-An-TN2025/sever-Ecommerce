@@ -52,9 +52,7 @@ exports.updateVoucher = async (req, res) => {
 
 exports.applyVoucher = async (req, res, next) => {
   try {
-    // normalize incoming code safely
     const raw = req.body?.code;
-    // convert object/number/event => string safely
     const code = String(
       (typeof raw === 'object' && raw !== null)
         ? (raw.code ?? raw.value ?? '')
@@ -93,6 +91,7 @@ exports.applyVoucher = async (req, res, next) => {
           title: voucher.title || voucher.code,
           type: voucher.type,
           value: voucher.value,
+          maxDiscount: voucher.maxDiscount || null,
           minAmount: voucher.minAmount || 0,
           expiresAt: voucher.expiresAt || null
         },
