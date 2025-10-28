@@ -12,15 +12,19 @@ app.use(cors({
 const corstest=process.env.CLIENT_URL;
 console.log('Test CORS DEPLOYD:', corstest);
 // Routes
+require("./src/cron/trainModelJob");
+
 app.use("/api/users", require("./src/routes/userRoutes"));
 app.use("/api/categories", require("./src/routes/categoryRoutes"));
 app.use("/api/products", require("./src/routes/productRoutes"));
-app.use("/api/variants", require("./src/routes/variantRoutes"));
+app.use("/api/variants", require("./src/routes/variantRoutes"));  
 app.use("/api/chat", require("./src/routes/chatRoutes")); 
 app.use("/api/cart", require("./src/routes/cartRoutes"));
 app.use ("/api/orders", require("./src/routes/orderRoutes"));
 app.use("/api/vouchers", require("./src/routes/voucherRoutes"));
-app.use("/api", require("./src/routes/trainRoutes"));
+
+
+
 app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(err.status || 500).json({ message: err.message || 'Server error' });
