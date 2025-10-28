@@ -10,6 +10,8 @@ const {
 } = require("../services/orderService");
 const { generateOrderCode } = require("../utils/orderUtils");
 require('dotenv').config();
+const { sendOrderCreatedEmail } = require("../services/emailService");
+
 
 const PAYOS_CLIENT_ID = process.env.PAYOS_CLIENT_ID;
 const PAYOS_API_KEY = process.env.PAYOS_API_KEY;
@@ -108,6 +110,7 @@ exports.createOrder = async (req, res) => {
     if (!shippingAddress?.fullName || !shippingAddress?.phone) {
       return res.status(400).json({ message: "Thiếu thông tin giao hàng" });
     }
+    if (!shippingAddress?.email && !guestInfo?.email && !req.body.contactEmail) return res.status(400).json({ message: "Thiếu email liên hệ" });
     if (!paymentMethod?.type) {
       return res.status(400).json({ message: "Thiếu phương thức thanh toán" });
     }
@@ -172,66 +175,11 @@ exports.createOrder = async (req, res) => {
       baseOrder.guestInfo = {
         fullName: guestName,
         phone: guestPhone,
-        email: guestInfo.email || req.body.contactEmail || null
+       email: guestInfo.email || req.body.contactEmail || shippingAddress.email || null
       };
     }
 
     if (paymentMethod.type !== "PayOS") {
-      try {
-        if (userId) {
-          await Order.updateMany(
-            {
-              userId,
-              orderStatus: "pending",
-              "paymentMethod.type": "PayOS",
-              "paymentMethod.status": "pending"
-            },
-            {
-              $set: {
-                orderStatus: "cancelled",
-                "paymentMethod.status": "cancelled",
-                "paymentMethod.cancelledAt": new Date(),
-                "paymentMethod.note": "Auto-cancelled: user created a non-online order"
-              }
-            }
-          );
-        } else {
-          // guest: try match by phone/email
-          const guestPhone = shippingAddress.phone;
-          const guestEmail = guestInfo.email || req.body.contactEmail || null;
-          const guestMatchers = [];
-          if (guestPhone) {
-            guestMatchers.push({ "shippingAddress.phone": guestPhone });
-            guestMatchers.push({ "guestInfo.phone": guestPhone });
-          }
-          if (guestEmail) {
-            guestMatchers.push({ "shippingAddress.email": guestEmail });
-            guestMatchers.push({ "guestInfo.email": guestEmail });
-          }
-          if (guestMatchers.length) {
-            await Order.updateMany(
-              {
-                orderStatus: "pending",
-                "paymentMethod.type": "PayOS",
-                "paymentMethod.status": "pending",
-                $or: guestMatchers
-              },
-              {
-                $set: {
-                  orderStatus: "cancelled",
-                  "paymentMethod.status": "cancelled",
-                  "paymentMethod.cancelledAt": new Date(),
-                  "paymentMethod.note": "Auto-cancelled: guest created a non-online order"
-                }
-              }
-            );
-          }
-        }
-      } catch (err) {
-        console.warn("Auto-cancel PayOS pending orders failed:", err);
-        // không block quá trình tạo order mới
-      }
-
       baseOrder.orderCode = generateOrderCode();
       const order = await Order.create(baseOrder);
       if (userId) {
@@ -244,6 +192,15 @@ exports.createOrder = async (req, res) => {
           }
         );
       }
+
+      // Send confirmation email immediately for non-online payment
+      try {
+        const recipient = order.shippingAddress?.email || order.guestInfo?.email || null;
+        if (recipient) sendOrderCreatedEmail(order, recipient).catch(err => console.warn("Send order email failed:", err));
+      } catch (e) {
+        console.warn("send order email error:", e);
+      }
+
       return res.status(201).json({ order });
     }
 
@@ -285,10 +242,8 @@ exports.createOrder = async (req, res) => {
 
     const order = await Order.create(baseOrder);
 
-    // IMPORTANT:
-    // Do NOT remove items from user's cart by default when creating a PayOS (online) order,
-    // because user may close/refresh without paying. If client wants to finalize immediately,
-    // send req.body.finalize = true to remove items from cart at creation time.
+    // DO NOT send email here for PayOS — wait for webhook confirmation
+    // Optional: if you want client to force finalize immediately, use req.body.finalize as before
     const finalize = !!req.body.finalize;
     if (userId && finalize === true) {
       await Cart.updateOne(
@@ -310,7 +265,7 @@ exports.createOrder = async (req, res) => {
     });
   } catch (error) {
     console.error("createOrder error:", error);
-    res.status(500).json({ message: "Tạo đơn hàng thất bại" });
+     res.status(500).json({ message: error.message, stack: error.stack });
   }
 };
 
@@ -721,5 +676,41 @@ exports.updateOrderStatus = async (req, res) => {
   } catch (error) {
     console.error("updateOrderStatus error:", error);
     res.status(500).json({ message: "Lỗi cập nhật trạng thái đơn hàng" });
+  }
+};
+
+exports.confirmOrderByToken = async (req, res) => {
+  try {
+    const { token } = req.query;
+    if (!token) return res.status(400).json({ message: 'Token required' });
+
+    const order = await Order.findOne({ 'confirmation.token': token });
+    if (!order) return res.status(404).json({ message: 'Order không tồn tại' });
+
+    if (order.confirmation.confirmed) return res.status(200).json({ message: 'Đã xác nhận' });
+    if (new Date() > new Date(order.confirmation.expiresAt)) {
+      order.orderStatus = 'cancelled';
+      order.confirmation.confirmed = false;
+      await order.save();
+      return res.status(410).json({ message: 'Token hết hạn, đơn đã hủy' });
+    }
+    order.confirmation.confirmed = true;
+    order.unconfirmed = false;
+    order.paymentMethod.status = 'pending';
+    await order.save();
+
+    try { await decreaseStock(order.items); } catch(e){ console.warn('decreaseStock', e); }
+    if (order.userId) {
+      await Cart.updateOne({ userId: order.userId }, { $pull: { items: { variantId: { $in: order.items.map(i => i.variantId) } } } });
+    }
+
+    // send order created email
+    const recipient = order.shippingAddress?.email || order.guestInfo?.email || null;
+    if (recipient) sendOrderCreatedEmail(order, recipient).catch(e => console.warn('send order email failed', e));
+
+    return res.json({ message: 'Xác nhận thành công', order });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: 'Lỗi server' });
   }
 };
