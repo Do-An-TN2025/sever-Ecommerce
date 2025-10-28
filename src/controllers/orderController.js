@@ -116,9 +116,10 @@ exports.createOrder = async (req, res) => {
     const subtotal = orderItems.reduce((sum, item) => sum + (item.price || 0) * (item.quantity || 0), 0);
     const shippingFee = Number(req.body.shippingFee || 0);
 
-   const userId = req.user?.id || req.user?._id || req.user?.userId || null;
+    const userId = req.user?.id || req.user?._id || req.user?.userId || null;
     console.log("Auth header:", req.headers.authorization);
     console.log("req.user:", userId);
+
     // voucher handling
     let voucherSnapshot = null;
     let discount = 0;
@@ -175,8 +176,62 @@ exports.createOrder = async (req, res) => {
       };
     }
 
-    // Non-PayOS: create order immediately
     if (paymentMethod.type !== "PayOS") {
+      try {
+        if (userId) {
+          await Order.updateMany(
+            {
+              userId,
+              orderStatus: "pending",
+              "paymentMethod.type": "PayOS",
+              "paymentMethod.status": "pending"
+            },
+            {
+              $set: {
+                orderStatus: "cancelled",
+                "paymentMethod.status": "cancelled",
+                "paymentMethod.cancelledAt": new Date(),
+                "paymentMethod.note": "Auto-cancelled: user created a non-online order"
+              }
+            }
+          );
+        } else {
+          // guest: try match by phone/email
+          const guestPhone = shippingAddress.phone;
+          const guestEmail = guestInfo.email || req.body.contactEmail || null;
+          const guestMatchers = [];
+          if (guestPhone) {
+            guestMatchers.push({ "shippingAddress.phone": guestPhone });
+            guestMatchers.push({ "guestInfo.phone": guestPhone });
+          }
+          if (guestEmail) {
+            guestMatchers.push({ "shippingAddress.email": guestEmail });
+            guestMatchers.push({ "guestInfo.email": guestEmail });
+          }
+          if (guestMatchers.length) {
+            await Order.updateMany(
+              {
+                orderStatus: "pending",
+                "paymentMethod.type": "PayOS",
+                "paymentMethod.status": "pending",
+                $or: guestMatchers
+              },
+              {
+                $set: {
+                  orderStatus: "cancelled",
+                  "paymentMethod.status": "cancelled",
+                  "paymentMethod.cancelledAt": new Date(),
+                  "paymentMethod.note": "Auto-cancelled: guest created a non-online order"
+                }
+              }
+            );
+          }
+        }
+      } catch (err) {
+        console.warn("Auto-cancel PayOS pending orders failed:", err);
+        // không block quá trình tạo order mới
+      }
+
       baseOrder.orderCode = generateOrderCode();
       const order = await Order.create(baseOrder);
       if (userId) {
@@ -230,7 +285,12 @@ exports.createOrder = async (req, res) => {
 
     const order = await Order.create(baseOrder);
 
-    if (userId) {
+    // IMPORTANT:
+    // Do NOT remove items from user's cart by default when creating a PayOS (online) order,
+    // because user may close/refresh without paying. If client wants to finalize immediately,
+    // send req.body.finalize = true to remove items from cart at creation time.
+    const finalize = !!req.body.finalize;
+    if (userId && finalize === true) {
       await Cart.updateOne(
         { userId },
         {
@@ -394,8 +454,6 @@ exports.cancelOrder = async (req, res) => {
     const { id } = req.params;
     const userId = req.user?.id;
 
-
-    
     const order = await Order.findOne({ _id: id, ...(userId && { userId }) });
     if (!order) return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
     if (order.orderStatus !== "pending") return res.status(400).json({ message: "Chỉ có thể hủy đơn hàng đang chờ xử lý" });
