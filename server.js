@@ -24,6 +24,10 @@ app.use ("/api/orders", require("./src/routes/orderRoutes"));
 app.use("/api/vouchers", require("./src/routes/voucherRoutes"));
 
 
+app.get('/ping', (req, res) => {
+  res.status(200).send('ok');
+});
+
 
 app.use((err, req, res, next) => {
   console.error('Error:', err);
