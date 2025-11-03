@@ -22,6 +22,7 @@ app.use("/api/chat", require("./src/routes/chatRoutes"));
 app.use("/api/cart", require("./src/routes/cartRoutes"));
 app.use ("/api/orders", require("./src/routes/orderRoutes"));
 app.use("/api/vouchers", require("./src/routes/voucherRoutes"));
+app.use("/api/admin/stats", require("./src/routes/statisRoutes"));
 
 
 app.get('/ping', (req, res) => {

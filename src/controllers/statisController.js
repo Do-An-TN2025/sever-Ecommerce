@@ -1,6 +1,8 @@
 const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const { Types } = mongoose;
+const { spawn } = require('child_process');
+const path = require('path');
 
 /**
  * GET /api/admin/stats/overview
@@ -78,7 +80,48 @@ exports.getAdminStats = async (req, res) => {
     const totals = (overview.totals && overview.totals[0]) || {};
     const statusCounts = (overview.byStatus || []).reduce((acc, s) => { acc[s._id || "unknown"] = s.count; return acc; }, {});
     const paymentCounts = (overview.byPayment || []).reduce((acc, p) => { acc[p._id || "unknown"] = p.count; return acc; }, {});
+    // translation maps (EN -> VN)
+    const statusLabelMap = {
+      created: 'Đã tạo',
+      pending: 'Đang chờ',
+      processing: 'Đang xử lý',
+      confirmed: 'Đã xác nhận',
+      paid: 'Đã thanh toán',
+      shipped: 'Đã gửi hàng',
+      delivered: 'Đã giao',
+      cancelled: 'Đã hủy',
+      refunded: 'Đã hoàn tiền',
+      unknown: 'Không xác định'
+    };
+    const paymentLabelMap = {
+      paid: 'Đã thanh toán',
+      pending: 'Đang chờ',
+      failed: 'Thanh toán thất bại',
+      cancelled: 'Đã hủy',
+      refunded: 'Đã hoàn tiền',
+      unpaid: 'Chưa thanh toán',
+      unknown: 'Không xác định'
+    };
+
+    // translated count objects (keep original counts as well)
+    const statusCountsVN = {};
+    for (const [k, v] of Object.entries(statusCounts)) {
+      const label = statusLabelMap[k] || k;
+      statusCountsVN[label] = v;
+    }
+    const paymentCountsVN = {};
+    for (const [k, v] of Object.entries(paymentCounts)) {
+      const label = paymentLabelMap[k] || k;
+      paymentCountsVN[label] = v;
+    }
     const uniqueCustomers = (overview.uniqueCustomers && overview.uniqueCustomers[0] && overview.uniqueCustomers[0].count) || 0;
+
+    // translate recentOrders fields for display convenience
+    const recentOrders = (overview.recentOrders || []).map(o => ({
+      ...o,
+      orderStatusVN: statusLabelMap[o.orderStatus] || o.orderStatus,
+      paymentStatusVN: (o.paymentMethod && o.paymentMethod.status) ? (paymentLabelMap[o.paymentMethod.status] || o.paymentMethod.status) : null
+    }));
 
     return res.json({
       totalOrders: totals.totalOrders || 0,
@@ -86,9 +129,11 @@ exports.getAdminStats = async (req, res) => {
       totalPaidRevenue: totals.totalPaidRevenue || 0,
       totalPaidOrders: totals.totalPaidOrders || 0,
       statusCounts,
+      statusCountsVN,
       paymentCounts,
+      paymentCountsVN,
       uniqueCustomers,
-      recentOrders: overview.recentOrders || []
+      recentOrders
     });
   } catch (err) {
     console.error("getAdminStats error:", err);
@@ -229,5 +274,37 @@ exports.getTopProducts = async (req, res) => {
   } catch (err) {
     console.error("getTopProducts error:", err);
     return res.status(500).json({ message: "Lỗi khi lấy top sản phẩm" });
+  }
+};
+
+/**
+ * GET /api/admin/stats/forecast?period=day&limit=1
+ * Trả về forecast được lưu trong collection `revenue_forecasts`.
+ * Nếu `limit` > 1 trả về nhiều bản ghi (mới nhất trước).
+ */
+exports.getRevenueForecast = async (req, res) => {
+  try {
+    const period = (req.query.period || null);
+    const limit = Math.max(1, parseInt(req.query.limit, 10) || 1);
+
+    // use native driver to access arbitrary collection
+    const db = (await require('mongoose').connection).db;
+    const coll = db.collection('revenue_forecasts');
+
+    const q = {};
+    if (period) q.period = period;
+
+    const docs = await coll.find(q).sort({ createdAt: -1 }).limit(limit).toArray();
+
+    if (!docs || docs.length === 0) {
+      return res.status(404).json({ message: 'No forecast found' });
+    }
+
+    // if limit==1 return single object for convenience
+    if (limit === 1) return res.json(docs[0]);
+    return res.json(docs);
+  } catch (err) {
+    console.error('getRevenueForecast error:', err);
+    return res.status(500).json({ message: 'Lỗi khi lấy forecast' });
   }
 };
