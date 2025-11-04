@@ -255,9 +255,18 @@ def main():
     }
 
     out_coll = db[args.out_collection]
-    out_coll.insert_one(doc)
-    logger.info("Inserted forecast document into %s (id=%s)", args.out_collection, doc.get('_id'))
-    print(json.dumps({"ok": True, "forecast_doc_id": str(doc.get('_id'))}))
+
+    # Upsert behavior: replace existing forecast for same period/range/horizon
+    filter_q = {"period": args.period, "range": args.range, "horizon": args.horizon}
+    # set createdAt to now for this run
+    doc["createdAt"] = datetime.utcnow()
+
+    result = out_coll.replace_one(filter_q, doc, upsert=True)
+    # fetch the document to get its _id (either existing or newly upserted)
+    stored = out_coll.find_one(filter_q)
+    logger.info("Upserted forecast document into %s (matched=%s upsertedId=%s id=%s)",
+                args.out_collection, result.matched_count, getattr(result, 'upserted_id', None), stored.get('_id') if stored else None)
+    print(json.dumps({"ok": True, "forecast_doc_id": str(stored.get('_id')) if stored else None}))
 
 
 if __name__ == '__main__':

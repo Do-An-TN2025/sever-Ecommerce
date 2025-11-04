@@ -21,3 +21,28 @@ cron.schedule("0 */4 * * *", () => {
     if (stderr) console.error(stderr);
   });
 });
+
+// Revenue forecast job: run once a day (1:00 UTC) to generate revenue_forecasts documents
+// Use ARIMA script; do not pass Mongo URI on CLI to avoid leaking secrets in process list.
+// The script reads MONGO_URI from environment if --mongo-uri is not provided.
+const REVENUE_CMD = `python scripts/train_revenue_forecast_arima.py \
+--orders-collection orders \
+--out-collection revenue_forecasts \
+--period day \
+--range 90 \
+--horizon 30`;
+
+cron.schedule("0 1 * * *", () => {
+  console.log("📈 Running revenue forecast job daily at 01:00 UTC:", new Date().toLocaleString());
+
+  exec(REVENUE_CMD, (error, stdout, stderr) => {
+    if (error) {
+      console.error("❌ Revenue forecast failed:", error.message);
+      return;
+    }
+
+    console.log("✅ Revenue forecast completed at", new Date().toLocaleString());
+    if (stdout) console.log(stdout);
+    if (stderr) console.error(stderr);
+  });
+});
