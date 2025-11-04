@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const Cart = require("../models/Cart");
 const Voucher = require("../models/Voucher");
+const User = require("../models/User");
 const {
   hydrateItems,
   decreaseStock,
@@ -17,7 +18,7 @@ const PAYOS_CLIENT_ID = process.env.PAYOS_CLIENT_ID;
 const PAYOS_API_KEY = process.env.PAYOS_API_KEY;
 const PAYOS_CHECKSUM_KEY = process.env.PAYOS_CHECKSUM_KEY;
 
-// Helper: validate voucher and return snapshot { voucher, discount, snapshot }
+// Helper: validate voucher and return snapshot { voucher, discount, snaps  hot }
 async function prepareVoucherSnapshot(voucherCode, orderItems, subtotal, shippingFee, userId) {
   if (!voucherCode) return null;
   const code = (voucherCode || "").trim().toUpperCase();
@@ -494,7 +495,9 @@ exports.getOrdersAdmin = async (req, res) => {
 
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, parseInt(req.query.limit) || 20);
-    const sortBy = req.query.sortBy || "createdAt";
+    // whitelist sort fields to avoid arbitrary field injection
+    const allowedSort = ["createdAt", "totalAmount", "orderCode", "orderStatus", "shippingFee", "subtotal"];
+    const sortBy = allowedSort.includes(req.query.sortBy) ? req.query.sortBy : "createdAt";
     const sortOrder = req.query.sortOrder === "asc" ? 1 : -1;
 
     const {
@@ -507,15 +510,35 @@ exports.getOrdersAdmin = async (req, res) => {
       dateTo
     } = req.query;
 
-    const filter = {};
+  const filter = {};
 
-    if (status) filter.orderStatus = status;
+    // support multiple statuses: comma separated list or single
+    if (status) {
+      if (typeof status === "string" && status.includes(",")) {
+        filter.orderStatus = { $in: status.split(",").map(s => s.trim()).filter(Boolean) };
+      } else {
+        filter.orderStatus = status;
+      }
+    }
     if (paymentStatus) filter["paymentMethod.status"] = paymentStatus;
     if (userId) filter.userId = userId;
     if (orderCode) filter.orderCode = new RegExp(orderCode, "i");
 
+    // full text / flexible search: try to find matching users first (name/email) and include by userId
     if (q) {
       const r = new RegExp(q, "i");
+      // find users matching q (name, email, phone)
+      const matchedUsers = await User.find({
+        $or: [
+          { firstName: r },
+          { lastName: r },
+          { email: r },
+          { phone: r }
+        ]
+      }).select("_id").lean();
+
+      const userIds = (matchedUsers || []).map(u => u._id);
+
       filter.$or = [
         { "shippingAddress.fullName": r },
         { "shippingAddress.phone": r },
@@ -524,6 +547,8 @@ exports.getOrdersAdmin = async (req, res) => {
         { orderCode: r },
         { "items.name": r }
       ];
+
+      if (userIds.length) filter.$or.push({ userId: { $in: userIds } });
     }
 
     if (dateFrom || dateTo) {
@@ -538,18 +563,127 @@ exports.getOrdersAdmin = async (req, res) => {
       if (!Object.keys(filter.createdAt).length) delete filter.createdAt;
     }
 
-    const total = await Order.countDocuments(filter);
+    // compute total count and total amount for the full filter
+    const aggMatch = { $match: filter };
+    const aggTotals = await Order.aggregate([
+      aggMatch,
+      {
+        $group: {
+          _id: null,
+          totalAmount: { $sum: { $ifNull: ["$totalAmount", 0] } },
+          count: { $sum: 1 }
+        }
+      }
+    ]).allowDiskUse(true);
+
+    const total = (aggTotals[0] && aggTotals[0].count) || 0;
+    const totalAmount = (aggTotals[0] && aggTotals[0].totalAmount) || 0;
+
+    // Tabs data for admin UI: always compute simple numeric counts so frontend không cần gọi riêng.
+    const [statusAgg, paymentAgg, unconfirmedCount] = await Promise.all([
+      Order.aggregate([
+        aggMatch,
+        { $group: { _id: "$orderStatus", count: { $sum: 1 }, totalAmount: { $sum: { $ifNull: ["$totalAmount", 0] } } } }
+      ]).allowDiskUse(true),
+      Order.aggregate([
+        aggMatch,
+        { $group: { _id: "$paymentMethod.status", count: { $sum: 1 } } }
+      ]).allowDiskUse(true),
+      Order.countDocuments({ ...filter, unconfirmed: true })
+    ]);
+
+    const byStatus = {};
+    (statusAgg || []).forEach(s => { byStatus[s._id || 'unknown'] = { count: s.count || 0, totalAmount: s.totalAmount || 0 }; });
+
+    const byPayment = {};
+    (paymentAgg || []).forEach(p => { byPayment[p._id || 'unknown'] = p.count || 0; });
+
+    // helpers to sum groups
+    const sumOf = keys => keys.reduce((acc, k) => acc + ((byStatus[k] && byStatus[k].count) || 0), 0);
+    const sumAmountOf = keys => keys.reduce((acc, k) => acc + ((byStatus[k] && byStatus[k].totalAmount) || 0), 0);
+
+    // simple numeric tabs object (always returned)
+    const tabs = {
+      all: total,
+      unconfirmed: unconfirmedCount || 0,
+      pending: (byStatus.pending && byStatus.pending.count) || 0,
+      confirmed: (byStatus.confirmed && byStatus.confirmed.count) || 0,
+      processing: sumOf(['pending', 'confirmed']),
+      paid: byPayment.paid || 0,
+      shipped: (byStatus.shipped && byStatus.shipped.count) || 0,
+      delivered: (byStatus.delivered && byStatus.delivered.count) || 0,
+      completed: (byStatus.completed && byStatus.completed.count) || 0,
+      cancelled: (byStatus.cancelled && byStatus.cancelled.count) || 0,
+      problems: byPayment.failed || 0,
+      // keep raw maps for potential UI needs
+      byStatus,
+      byPayment
+    };
+      // If the caller only wants numeric counts for tabs, return a minimal object with numbers.
+      if (req.query.countsOnly === 'true' || req.query.countsOnly === '1') {
+        const simple = {
+          all: total,
+          unconfirmed: unconfirmedCount || 0,
+          pending: (byStatus.pending && byStatus.pending.count) || 0,
+          confirmed: (byStatus.confirmed && byStatus.confirmed.count) || 0,
+          processing: sumOf(['pending', 'confirmed']),
+          paid: byPayment.paid || 0,
+          shipped: (byStatus.shipped && byStatus.shipped.count) || 0,
+          delivered: (byStatus.delivered && byStatus.delivered.count) || 0,
+          completed: (byStatus.completed && byStatus.completed.count) || 0,
+          cancelled: (byStatus.cancelled && byStatus.cancelled.count) || 0,
+          problems: byPayment.failed || 0
+        };
+        return res.json({ tabs: simple });
+      }
+
+    // fetch paged orders
     const orders = await Order.find(filter)
       .sort({ [sortBy]: sortOrder })
       .skip((page - 1) * limit)
       .limit(limit)
       .populate("items.productId", "name slug")
       .populate("items.variantId", "sku images color")
-      .populate("userId", "firstName lastName email")
+      .populate("userId", "firstName lastName email phone")
       .lean();
 
+    // page sum of totalAmount
+    const pageTotal = orders.reduce((s, o) => s + (o.totalAmount || 0), 0);
+
+    // Optional CSV export
+    if (req.query.export === "csv") {
+      // simple CSV generator (comma separated, basic escaping)
+      const cols = ["orderCode", "customerName", "phone", "email", "orderStatus", "paymentStatus", "subtotal", "shippingFee", "discount", "totalAmount", "createdAt"];
+      const lines = [];
+      lines.push(cols.join(","));
+      for (const o of orders) {
+        const name = o.shippingAddress?.fullName || o.guestInfo?.fullName || (o.userId && `${o.userId.firstName || ""} ${o.userId.lastName || ""}`) || "";
+        const phone = o.shippingAddress?.phone || o.guestInfo?.phone || (o.userId && o.userId.phone) || "";
+        const email = o.shippingAddress?.email || o.guestInfo?.email || (o.userId && o.userId.email) || "";
+        const row = [
+          o.orderCode || "",
+          `"${(name || "").replace(/"/g, '""') }"`,
+          `"${(phone || "").replace(/"/g, '""') }"`,
+          `"${(email || "").replace(/"/g, '""') }"`,
+          o.orderStatus || "",
+          o.paymentMethod?.status || "",
+          o.subtotal || 0,
+          o.shippingFee || 0,
+          o.discount || 0,
+          o.totalAmount || 0,
+          o.createdAt ? new Date(o.createdAt).toISOString() : ""
+        ];
+        lines.push(row.join(","));
+      }
+      const csv = lines.join("\n");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename=orders_page_${page}.csv`);
+      return res.send(Buffer.from(csv, "utf8"));
+    }
+
     res.json({
-      meta: { total, page, limit, pages: Math.ceil(total / limit) },
+      meta: { total, totalAmount, pageTotal, page, limit, pages: Math.ceil(total / limit) },
+      tabs,
       data: orders
     });
   } catch (err) {
