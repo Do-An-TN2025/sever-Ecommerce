@@ -877,3 +877,100 @@ exports.mlRecommend = async (req, res) => {
     return res.status(500).json({ message: "Error getting ML recommendations" });
   }
 };
+
+
+exports.getRecentlyViewedProducts = async (req, res) => {
+  try {
+    let slugs = [];
+    if (req.body && Array.isArray(req.body.slugs)) {
+      slugs = req.body.slugs;
+    } else if (req.query && req.query.slugs) {
+      const raw = req.query.slugs;
+      if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) slugs = parsed;
+          else slugs = raw.split(',').map(s => s.trim()).filter(Boolean);
+        } catch (e) {
+          slugs = raw.split(',').map(s => s.trim()).filter(Boolean);
+        }
+      } else if (Array.isArray(raw)) {
+        slugs = raw;
+      }
+    }
+
+    if (!Array.isArray(slugs)) {
+      return res.status(400).json({ message: 'slugs must be an array' });
+    }
+
+    const uniqSlugs = [...new Set(slugs.map(s => String(s).trim()).filter(Boolean))];
+    if (uniqSlugs.length === 0) return res.json({ products: [] });
+
+    // Query products in one go
+    const products = await Product.find({ slug: { $in: uniqSlugs }, status: 'active' })
+      .populate('categoryId', 'name slug')
+      .lean();
+
+    if (!products || products.length === 0) return res.json({ products: [] });
+
+    // Fetch variants for all products in bulk
+    const productIds = products.map(p => p._id);
+    const variants = await ProductVariant.find({ productId: { $in: productIds } }).lean();
+
+    // group variants by productId
+    const variantsByProduct = {};
+    variants.forEach(v => {
+      const pid = String(v.productId);
+      if (!variantsByProduct[pid]) variantsByProduct[pid] = [];
+      variantsByProduct[pid].push(v);
+    });
+
+    // map slug -> product for quick lookup
+    const prodBySlug = {};
+    products.forEach(p => { prodBySlug[p.slug] = p; });
+
+    const result = [];
+    for (const s of uniqSlugs) {
+      const p = prodBySlug[s];
+      if (!p) continue; // product not found
+
+      const pVariants = variantsByProduct[String(p._id)] || [];
+      const validVariants = pVariants.filter(v => Array.isArray(v.sizes) && v.sizes.some(sz => (sz.stock || 0) > 0));
+      if (!validVariants.length) continue; // skip out-of-stock products
+
+      // compute min final price
+      let minFinal = Infinity;
+      validVariants.forEach(v => {
+        v.sizes.forEach(sz => {
+          const fp = (sz.discountPrice && sz.discountPrice > 0) ? sz.discountPrice : sz.price;
+          if (fp < minFinal) minFinal = fp;
+        });
+      });
+
+      // pick first available image
+      let images = [];
+      const vWithImg = validVariants.find(v => Array.isArray(v.images) && v.images.length > 0);
+      if (vWithImg) images = vWithImg.images;
+
+      result.push({
+        _id: p._id,
+        name: p.name,
+        slug: p.slug,
+        shortDescription: p.shortDescription,
+        images,
+        finalPrice: minFinal === Infinity ? 0 : minFinal,
+        categoryId: p.categoryId
+      });
+    }
+
+    return res.json({ products: result });
+  } catch (err) {
+    console.error('Error fetching recently viewed products:', err);
+    return res.status(500).json({ message: 'Lỗi server', error: err.message });
+  }
+};
+
+
+
+
+

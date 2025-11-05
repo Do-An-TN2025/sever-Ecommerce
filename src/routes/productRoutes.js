@@ -7,6 +7,7 @@ router.get("/", productController.getAllProducts);
 router.get("/default-variant", productController.getAllProductsWithDefaultVariant);
 router.get("/search", productController.searchProducts);
 router.get("/details/:slug", productController.getProductDetailsBySlug);
+router.post("/recently-viewed", productController.getRecentlyViewedProducts);
 router.get("/:slug", productController.getProductBySlugCategory);
 router.get("/variant/details", productController.getVariantDetails);
 
