@@ -458,3 +458,55 @@ exports.mergeCart = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
+// Giảm 1 số lượng của item (nếu về 0 thì xóa item)
+exports.decrementItem = async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    const identity = resolveIdentity(req);
+    const cart = await getOrCreateCart(identity);
+    if (!cart) return res.status(404).json({ message: 'Cart not found' });
+
+    // robust lookup whether items are subdocs or plain objects
+    const isSubdoc = (typeof cart.items.id === 'function');
+    const item = isSubdoc ? cart.items.id(itemId) : cart.items.find(i => String(i._id || i.id) === String(itemId));
+    if (!item) return res.status(404).json({ message: 'Item not found' });
+
+    // If quantity missing, assume 1
+    const currentQty = Number(item.quantity || 1);
+
+    if (currentQty > 1) {
+      // decrement
+      if (typeof item.set === 'function') {
+        item.quantity = currentQty - 1; // mongoose subdoc
+      } else {
+        const idx = cart.items.findIndex(i => String(i._id || i.id) === String(itemId));
+        if (idx === -1) return res.status(404).json({ message: 'Item not found' });
+        cart.items[idx].quantity = currentQty - 1;
+      }
+    } else {
+      // remove item
+      if (isSubdoc) {
+        const sub = cart.items.id(itemId);
+        if (!sub) return res.status(404).json({ message: 'Item not found' });
+        if (typeof sub.remove === 'function') sub.remove();
+        else {
+          const idx = cart.items.findIndex(i => String(i._id || i.id) === String(itemId));
+          if (idx !== -1) cart.items.splice(idx, 1);
+        }
+      } else {
+        const idx = cart.items.findIndex(i => String(i._id || i.id) === String(itemId));
+        if (idx === -1) return res.status(404).json({ message: 'Item not found' });
+        cart.items.splice(idx, 1);
+      }
+    }
+
+    cart.updatedAt = new Date();
+    await cart.save();
+
+    return res.json({ items: cart.items, totals: summarize(cart) });
+  } catch (err) {
+    console.error('decrementItem error', err);
+    return res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
