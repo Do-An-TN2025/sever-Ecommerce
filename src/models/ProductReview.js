@@ -11,7 +11,7 @@ const productReviewSchema = new mongoose.Schema(
 );
 
 productReviewSchema.post("save", async function () {
-  const Product = require("./Product").Product;
+  const Product = require("./Product");
   const reviews = await this.constructor.find({ productId: this.productId });
 
   const avg = reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length;
@@ -23,3 +23,7 @@ productReviewSchema.post("save", async function () {
     }
   });
 });
+
+const ProductReview = mongoose.model("ProductReview", productReviewSchema);
+
+module.exports = ProductReview;
