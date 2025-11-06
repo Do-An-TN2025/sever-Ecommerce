@@ -6,6 +6,8 @@ const { authMiddleware, staffOrAdmin , adminOnly } = require("../middlewares/aut
 router.get("/", productController.getAllProducts);
 router.get("/default-variant", productController.getAllProductsWithDefaultVariant);
 router.get("/search", productController.searchProducts);
+router.get("/best-sellers", productController.getBestSellers);
+router.get("/new", productController.getNewProducts);
 router.get("/details/:slug", productController.getProductDetailsBySlug);
 router.post("/recently-viewed", productController.getRecentlyViewedProducts);
 router.get("/:slug", productController.getProductBySlugCategory);
