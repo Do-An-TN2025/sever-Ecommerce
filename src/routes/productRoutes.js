@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const productController = require("../controllers/productController");
 const { authMiddleware, staffOrAdmin , adminOnly } = require("../middlewares/authMiddleware");
+const reviewController = require('../controllers/reviewController');
 
 router.get("/", productController.getAllProducts);
 router.get("/default-variant", productController.getAllProductsWithDefaultVariant);
@@ -9,6 +10,13 @@ router.get("/search", productController.searchProducts);
 router.get("/best-sellers", productController.getBestSellers);
 router.get("/new", productController.getNewProducts);
 router.get("/details/:slug", productController.getProductDetailsBySlug);
+router.get("/details/:slug/reviews", reviewController.getReviewsBySlug);
+
+// create or update review (auth)
+router.post('/:productId/reviews', authMiddleware, reviewController.createOrUpdateReview);
+
+// delete review (owner or admin)
+router.delete('/reviews/:id', authMiddleware, reviewController.deleteReview);
 router.post("/recently-viewed", productController.getRecentlyViewedProducts);
 router.get("/:slug", productController.getProductBySlugCategory);
 router.get("/variant/details", productController.getVariantDetails);

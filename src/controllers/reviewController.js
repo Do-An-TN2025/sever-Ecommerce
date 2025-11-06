@@ -1,0 +1,102 @@
+const Product = require('../models/Product');
+const Order = require('../models/Order');
+const ProductReview = require('../models/ProductReview');
+
+// Create or update a product review — only allowed if user purchased the product (delivered/completed)
+exports.createOrUpdateReview = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ message: 'Auth required' });
+
+    const { productId, slug, rating, comment } = req.body || {};
+    if (!productId && !slug) return res.status(400).json({ message: 'productId or slug is required' });
+    const prod = productId ? await Product.findById(productId) : await Product.findOne({ slug });
+    if (!prod) return res.status(404).json({ message: 'Product not found' });
+
+    const pid = prod._id;
+
+    const r = Number(rating);
+    if (!r || r < 1 || r > 5) return res.status(400).json({ message: 'rating must be an integer between 1 and 5' });
+
+    // Verify user has at least one completed/delivered order containing this product
+    const hasPurchased = await Order.exists({ userId: user._id, orderStatus: { $in: ['delivered','completed'] }, 'items.productId': pid });
+    if (!hasPurchased) {
+      return res.status(403).json({ message: 'You can only review products you have purchased and received' });
+    }
+
+    // If user already reviewed, update; otherwise create
+    let review = await ProductReview.findOne({ productId: pid, userId: user._id });
+    if (review) {
+      review.rating = r;
+      review.comment = comment || review.comment;
+      await review.save();
+      return res.json({ message: 'Review updated', review });
+    }
+
+    review = new ProductReview({ productId: pid, userId: user._id, rating: r, comment });
+    await review.save();
+    return res.status(201).json({ message: 'Review created', review });
+  } catch (err) {
+    console.error('createOrUpdateReview error', err);
+    return res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
+// Get reviews for a product by slug
+exports.getReviewsBySlug = async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const { page = 1, limit = 10 } = req.query;
+    const PAGE = Math.max(1, parseInt(page));
+    const LIMIT = Math.min(50, Math.max(1, parseInt(limit)));
+
+    const prod = await Product.findOne({ slug });
+    if (!prod) return res.status(404).json({ message: 'Product not found' });
+
+    const total = await ProductReview.countDocuments({ productId: prod._id });
+    const reviews = await ProductReview.find({ productId: prod._id })
+      .sort({ createdAt: -1 })
+      .skip((PAGE - 1) * LIMIT)
+      .limit(LIMIT)
+      .populate('userId', 'firstName lastName avatar');
+
+    return res.json({ productId: prod._id, total, page: PAGE, perPage: LIMIT, reviews });
+  } catch (err) {
+    console.error('getReviewsBySlug error', err);
+    return res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
+// Delete review by id (owner or admin)
+exports.deleteReview = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ message: 'Auth required' });
+
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ message: 'review id required' });
+
+    const review = await ProductReview.findById(id);
+    if (!review) return res.status(404).json({ message: 'Review not found' });
+
+    const isOwner = String(review.userId) === String(user._id);
+    const isAdmin = user.role === 'admin';
+    if (!isOwner && !isAdmin) return res.status(403).json({ message: 'Not allowed' });
+
+    await review.remove();
+
+    // After removal, recompute product rating
+    const reviews = await ProductReview.find({ productId: review.productId });
+    if (reviews.length === 0) {
+      await Product.findByIdAndUpdate(review.productId, { $set: { 'rating.average': 0, 'rating.count': 0 } });
+    } else {
+      const avg = reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length;
+      await Product.findByIdAndUpdate(review.productId, { $set: { 'rating.average': avg, 'rating.count': reviews.length } });
+    }
+
+    return res.json({ message: 'Review deleted' });
+  } catch (err) {
+    console.error('deleteReview error', err);
+    return res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
