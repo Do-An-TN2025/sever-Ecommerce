@@ -486,7 +486,26 @@ exports.getOrderById = async (req, res) => {
   }
 };
 
+exports.getOrderByCode = async (req, res) => {
+  try {
+    const { orderCode } = req.params;
+    
+    const order = await Order.findOne({ orderCode })
+      .populate("items.productId", "name slug")
+      .populate("items.variantId", "color colorCode sizes images sku")
+      .populate("userId", "firstName lastName email phone avatar")
+      .lean();
 
+    if (!order) {
+      return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
+    }
+
+    res.json(order);
+  } catch (error) {
+    console.error("getOrderByCode error:", error);
+    res.status(500).json({ message: "Lỗi lấy thông tin đơn hàng" });
+  }
+};
 
 exports.getOrdersAdmin = async (req, res) => {
   try {
@@ -799,6 +818,37 @@ exports.updateOrderStatus = async (req, res) => {
           );
         } catch (err) {
           console.error("push back to cart error (admin):", err);
+        }
+      }
+    }
+
+    // Handle completed: ensure payment is marked as paid and add to user's order history
+    const willBeCompleted = orderStatus === "completed" && prevOrderStatus !== "completed";
+    if (willBeCompleted) {
+      // Đơn hàng hoàn tất phải đã thanh toán
+      if (order.paymentMethod.status !== "paid") {  
+        order.paymentMethod.status = "paid";
+        order.paymentMethod.paidAt = order.paymentMethod.paidAt || new Date();
+      }
+
+      // Thêm vào order history của user
+      if (order.userId) {
+        try {
+          await User.updateOne(
+            { _id: order.userId },
+            {
+              $push: {
+                orderHistory: {
+                  orderId: order._id,
+                  purchasedAt: new Date()
+                }
+              }
+            }
+          );
+          console.log("✅ Order added to user history:", order._id);
+        } catch (err) {
+          console.error("Add to orderHistory error:", err);
+          // continue anyway
         }
       }
     }

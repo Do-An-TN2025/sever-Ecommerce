@@ -4,6 +4,7 @@ const {
   createOrder,
   getMyOrders,
   getOrderById,
+  getOrderByCode,
   handlePayOSWebhook,
   checkPaymentStatus,
   cancelOrder,
@@ -27,6 +28,7 @@ router.get('/stats/sales', authMiddleware , adminOnly, statisController.getSales
 router.get('/stats/top-products', authMiddleware , adminOnly, statisController.getTopProducts);
 
 router.get("/",authMiddleware,getMyOrders);
+router.get("/code/:orderCode", getOrderByCode);
 router.get("/:id", getOrderById);
 
 router.get('/payment-status/:orderCode', checkPaymentStatus);

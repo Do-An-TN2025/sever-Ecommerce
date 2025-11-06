@@ -2,6 +2,7 @@ const Product = require("../models/Product");
 const Category = require("../models/Category");
 const ProductVariant = require("../models/ProductVariant");
 const mlService = require("../services/mlRecommenderService");
+const Order = require("../models/Order");
 
 exports.createProduct = async (req, res) => {
   try {
@@ -877,3 +878,232 @@ exports.mlRecommend = async (req, res) => {
     return res.status(500).json({ message: "Error getting ML recommendations" });
   }
 };
+
+exports.getBestSellers = async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(50, parseInt(req.query.limit) || 6));
+    const days = parseInt(req.query.days) || 90;
+
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    // Aggregate order items to compute sold quantities per product
+    const agg = await Order.aggregate([
+      { $match: { orderStatus: { $in: ["delivered", "completed"] }, createdAt: { $gte: since } } },
+      { $unwind: "$items" },
+      { $group: {
+        _id: "$items.productId",
+        soldQuantity: { $sum: "$items.quantity" },
+        lastSoldAt: { $max: "$createdAt" }
+      } },
+      { $sort: { soldQuantity: -1, lastSoldAt: -1 } },
+      { $limit: limit }
+    ]);
+
+    const productIds = agg.map(a => a._id).filter(Boolean);
+    if (!productIds.length) return res.json({ products: [] });
+
+    const products = await Product.find({ _id: { $in: productIds } })
+      .select('name slug shortDescription brand categoryId')
+      .lean();
+
+    // Get variants to compute min final price and an image
+    const variants = await ProductVariant.find({ productId: { $in: productIds } }).lean();
+    const variantsByProduct = {};
+    variants.forEach(v => {
+      const pid = String(v.productId);
+      if (!variantsByProduct[pid]) variantsByProduct[pid] = [];
+      variantsByProduct[pid].push(v);
+    });
+
+    // Map products preserving order from agg
+    const productsMap = new Map(products.map(p => [String(p._id), p]));
+    const result = agg.map(a => {
+      const pid = String(a._id);
+      const p = productsMap.get(pid);
+      if (!p) return null;
+
+      // compute min final price across variants
+      const pvars = variantsByProduct[pid] || [];
+      let minFinal = Infinity;
+      let image = [];
+      pvars.forEach(v => {
+        (v.sizes || []).forEach(s => {
+          const fp = (s.discountPrice && s.discountPrice > 0) ? s.discountPrice : s.price;
+          if (fp < minFinal) minFinal = fp;
+        });
+        if ((!image || image.length === 0) && Array.isArray(v.images) && v.images.length) image = v.images;
+      });
+
+      return {
+        _id: p._id,
+        name: p.name,
+        slug: p.slug,
+        shortDescription: p.shortDescription,
+        brand: p.brand,
+        categoryId: p.categoryId,
+        images: image,
+        finalPrice: minFinal === Infinity ? 0 : minFinal,
+        soldQuantity: a.soldQuantity,
+        lastSoldAt: a.lastSoldAt
+      };
+    }).filter(Boolean);
+
+    return res.json({ products: result });
+  } catch (err) {
+    console.error('getBestSellers error', err);
+    return res.status(500).json({ message: 'Internal server error', error: err.message });
+  }
+};
+
+exports.getNewProducts = async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(50, parseInt(req.query.limit) || 6));
+
+    const products = await Product.find({ status: 'active' })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    if (!products || products.length === 0) return res.json({ products: [] });
+
+    const productIds = products.map(p => p._id);
+    const variants = await ProductVariant.find({ productId: { $in: productIds } }).lean();
+    const variantsByProduct = {};
+    variants.forEach(v => {
+      const pid = String(v.productId);
+      if (!variantsByProduct[pid]) variantsByProduct[pid] = [];
+      variantsByProduct[pid].push(v);
+    });
+
+    const result = products.map(p => {
+      const pid = String(p._id);
+      const pvars = variantsByProduct[pid] || [];
+      let minFinal = Infinity;
+      let image = [];
+      pvars.forEach(v => {
+        (v.sizes || []).forEach(s => {
+          const fp = (s.discountPrice && s.discountPrice > 0) ? s.discountPrice : s.price;
+          if (fp < minFinal) minFinal = fp;
+        });
+        if ((!image || image.length === 0) && Array.isArray(v.images) && v.images.length) image = v.images;
+      });
+
+      return {
+        _id: p._id,
+        name: p.name,
+        slug: p.slug,
+        shortDescription: p.shortDescription,
+        brand: p.brand,
+        categoryId: p.categoryId,
+        images: image,
+        finalPrice: minFinal === Infinity ? 0 : minFinal,
+        createdAt: p.createdAt
+      };
+    });
+
+    return res.json({ products: result });
+  } catch (err) {
+    console.error('getNewProducts error', err);
+    return res.status(500).json({ message: 'Internal server error', error: err.message });
+  }
+};
+
+
+exports.getRecentlyViewedProducts = async (req, res) => {
+  try {
+    let slugs = [];
+    if (req.body && Array.isArray(req.body.slugs)) {
+      slugs = req.body.slugs;
+    } else if (req.query && req.query.slugs) {
+      const raw = req.query.slugs;
+      if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) slugs = parsed;
+          else slugs = raw.split(',').map(s => s.trim()).filter(Boolean);
+        } catch (e) {
+          slugs = raw.split(',').map(s => s.trim()).filter(Boolean);
+        }
+      } else if (Array.isArray(raw)) {
+        slugs = raw;
+      }
+    }
+
+    if (!Array.isArray(slugs)) {
+      return res.status(400).json({ message: 'slugs must be an array' });
+    }
+
+    const uniqSlugs = [...new Set(slugs.map(s => String(s).trim()).filter(Boolean))];
+    if (uniqSlugs.length === 0) return res.json({ products: [] });
+
+    // Query products in one go
+    const products = await Product.find({ slug: { $in: uniqSlugs }, status: 'active' })
+      .populate('categoryId', 'name slug')
+      .lean();
+
+    if (!products || products.length === 0) return res.json({ products: [] });
+
+    // Fetch variants for all products in bulk
+    const productIds = products.map(p => p._id);
+    const variants = await ProductVariant.find({ productId: { $in: productIds } }).lean();
+
+    // group variants by productId
+    const variantsByProduct = {};
+    variants.forEach(v => {
+      const pid = String(v.productId);
+      if (!variantsByProduct[pid]) variantsByProduct[pid] = [];
+      variantsByProduct[pid].push(v);
+    });
+
+    // map slug -> product for quick lookup
+    const prodBySlug = {};
+    products.forEach(p => { prodBySlug[p.slug] = p; });
+
+    const result = [];
+    for (const s of uniqSlugs) {
+      const p = prodBySlug[s];
+      if (!p) continue; // product not found
+
+      const pVariants = variantsByProduct[String(p._id)] || [];
+      const validVariants = pVariants.filter(v => Array.isArray(v.sizes) && v.sizes.some(sz => (sz.stock || 0) > 0));
+      if (!validVariants.length) continue; // skip out-of-stock products
+
+      // compute min final price
+      let minFinal = Infinity;
+      validVariants.forEach(v => {
+        v.sizes.forEach(sz => {
+          const fp = (sz.discountPrice && sz.discountPrice > 0) ? sz.discountPrice : sz.price;
+          if (fp < minFinal) minFinal = fp;
+        });
+      });
+
+      // pick first available image
+      let images = [];
+      const vWithImg = validVariants.find(v => Array.isArray(v.images) && v.images.length > 0);
+      if (vWithImg) images = vWithImg.images;
+
+      result.push({
+        _id: p._id,
+        name: p.name,
+        slug: p.slug,
+        shortDescription: p.shortDescription,
+        images,
+        finalPrice: minFinal === Infinity ? 0 : minFinal,
+        categoryId: p.categoryId
+      });
+    }
+
+    return res.json({ products: result });
+  } catch (err) {
+    console.error('Error fetching recently viewed products:', err);
+    return res.status(500).json({ message: 'Lỗi server', error: err.message });
+  }
+};
+
+
+
+
+
+
+
+

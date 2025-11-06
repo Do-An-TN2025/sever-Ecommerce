@@ -80,48 +80,7 @@ exports.getAdminStats = async (req, res) => {
     const totals = (overview.totals && overview.totals[0]) || {};
     const statusCounts = (overview.byStatus || []).reduce((acc, s) => { acc[s._id || "unknown"] = s.count; return acc; }, {});
     const paymentCounts = (overview.byPayment || []).reduce((acc, p) => { acc[p._id || "unknown"] = p.count; return acc; }, {});
-    // translation maps (EN -> VN)
-    const statusLabelMap = {
-      created: 'Đã tạo',
-      pending: 'Đang chờ',
-      processing: 'Đang xử lý',
-      confirmed: 'Đã xác nhận',
-      paid: 'Đã thanh toán',
-      shipped: 'Đã gửi hàng',
-      delivered: 'Đã giao',
-      cancelled: 'Đã hủy',
-      refunded: 'Đã hoàn tiền',
-      unknown: 'Không xác định'
-    };
-    const paymentLabelMap = {
-      paid: 'Đã thanh toán',
-      pending: 'Đang chờ',
-      failed: 'Thanh toán thất bại',
-      cancelled: 'Đã hủy',
-      refunded: 'Đã hoàn tiền',
-      unpaid: 'Chưa thanh toán',
-      unknown: 'Không xác định'
-    };
-
-    // translated count objects (keep original counts as well)
-    const statusCountsVN = {};
-    for (const [k, v] of Object.entries(statusCounts)) {
-      const label = statusLabelMap[k] || k;
-      statusCountsVN[label] = v;
-    }
-    const paymentCountsVN = {};
-    for (const [k, v] of Object.entries(paymentCounts)) {
-      const label = paymentLabelMap[k] || k;
-      paymentCountsVN[label] = v;
-    }
     const uniqueCustomers = (overview.uniqueCustomers && overview.uniqueCustomers[0] && overview.uniqueCustomers[0].count) || 0;
-
-    // translate recentOrders fields for display convenience
-    const recentOrders = (overview.recentOrders || []).map(o => ({
-      ...o,
-      orderStatusVN: statusLabelMap[o.orderStatus] || o.orderStatus,
-      paymentStatusVN: (o.paymentMethod && o.paymentMethod.status) ? (paymentLabelMap[o.paymentMethod.status] || o.paymentMethod.status) : null
-    }));
 
     return res.json({
       totalOrders: totals.totalOrders || 0,
@@ -129,11 +88,9 @@ exports.getAdminStats = async (req, res) => {
       totalPaidRevenue: totals.totalPaidRevenue || 0,
       totalPaidOrders: totals.totalPaidOrders || 0,
       statusCounts,
-      statusCountsVN,
       paymentCounts,
-      paymentCountsVN,
       uniqueCustomers,
-      recentOrders
+      recentOrders: overview.recentOrders || []
     });
   } catch (err) {
     console.error("getAdminStats error:", err);
@@ -243,7 +200,7 @@ exports.getSalesByPeriod = async (req, res) => {
 /**
  * GET /api/admin/stats/top-products?limit=10&periodDays=90
  * Trả về top sản phẩm theo số lượng bán trong khoảng periodDays (mặc định 90)
- */
+ */ 
 exports.getTopProducts = async (req, res) => {
   try {
     const limit = Math.min(100, parseInt(req.query.limit, 10) || 10);
