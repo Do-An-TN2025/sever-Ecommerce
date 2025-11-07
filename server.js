@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
+require('dotenv').config();
 const { ENV, connectDB } = require("./src/config");
-require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const app = express();
 app.use(express.json());
 
@@ -22,7 +22,7 @@ app.use("/api/chat", require("./src/routes/chatRoutes"));
 app.use("/api/cart", require("./src/routes/cartRoutes"));
 app.use ("/api/orders", require("./src/routes/orderRoutes"));
 app.use("/api/vouchers", require("./src/routes/voucherRoutes"));
-app.use("/api/admin/stats", require("./src/routes/statisRoutes"));
+  app.use("/api/admin/stats", require("./src/routes/statisRoutes"));
 
 
 app.get('/ping', (req, res) => {

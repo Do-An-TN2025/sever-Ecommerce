@@ -11,7 +11,7 @@ const {
 } = require("../services/orderService");
 const { generateOrderCode } = require("../utils/orderUtils");
 require('dotenv').config();
-const { sendOrderCreatedEmail } = require("../services/emailService");
+const { sendOrderCreatedEmail, sendOrderStatusUpdateEmail } = require("../services/emailService");
 
 
 const PAYOS_CLIENT_ID = process.env.PAYOS_CLIENT_ID;
@@ -855,6 +855,30 @@ exports.updateOrderStatus = async (req, res) => {
 
     order.updatedAt = new Date();
     await order.save();
+
+    // Gửi email thông báo cập nhật trạng thái
+    try {
+      const customerEmail = order.userId 
+        ? (await User.findById(order.userId))?.email 
+        : order.guestInfo?.email || order.shippingAddress?.email;
+      
+      if (customerEmail) {
+        // Gửi email nếu có thay đổi trạng thái đơn hàng
+        if (orderStatus && orderStatus !== prevOrderStatus) {
+          await sendOrderStatusUpdateEmail(order, customerEmail, 'order', orderStatus);
+          console.log(`📧 Email cập nhật trạng thái đơn hàng đã gửi đến: ${customerEmail}`);
+        }
+        
+        // Gửi email nếu có thay đổi trạng thái thanh toán
+        if (paymentStatus && paymentStatus !== prevPaymentStatus) {
+          await sendOrderStatusUpdateEmail(order, customerEmail, 'payment', paymentStatus);
+          console.log(`📧 Email cập nhật trạng thái thanh toán đã gửi đến: ${customerEmail}`);
+        }
+      }
+    } catch (emailError) {
+      console.error("Lỗi khi gửi email thông báo:", emailError);
+      // Không throw error để không làm fail toàn bộ request
+    }
 
     res.json({ message: "Cập nhật trạng thái thành công", order });
   } catch (error) {
