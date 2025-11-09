@@ -12,6 +12,7 @@ const {
 const { generateOrderCode } = require("../utils/orderUtils");
 require('dotenv').config();
 const { sendOrderCreatedEmail } = require("../services/emailService");
+const { sendOrderZNSByStatus } = require("../utils/zaloZNSUtil");
 
 
 const PAYOS_CLIENT_ID = process.env.PAYOS_CLIENT_ID;
@@ -851,11 +852,31 @@ exports.updateOrderStatus = async (req, res) => {
           // continue anyway
         }
       }
+      try {
+        await sendOrderZNSByStatus({
+          phone: String(
+            order.shippingAddress?.phone || order.guestInfo?.phone || ""
+          ),
+          status: "complete",
+          templateData: {
+            customer_name: String(
+              order.shippingAddress?.fullName ||
+                order.guestInfo?.fullName ||
+                "Quý khách"
+            ),
+            date: new Date().toLocaleDateString("vi-VN"),
+            order_id: String(order.orderCode || ""),
+          },
+          trackingId: `order_${order._id}`,
+        });
+      } catch (err) {
+        console.error("sendOrderZNSByStatus (paid) error:", err);
+      }
     }
 
     order.updatedAt = new Date();
     await order.save();
-
+    
     res.json({ message: "Cập nhật trạng thái thành công", order });
   } catch (error) {
     console.error("updateOrderStatus error:", error);
@@ -891,7 +912,41 @@ exports.confirmOrderByToken = async (req, res) => {
     // send order created email
     const recipient = order.shippingAddress?.email || order.guestInfo?.email || null;
     if (recipient) sendOrderCreatedEmail(order, recipient).catch(e => console.warn('send order email failed', e));
-
+    
+    try {
+      await sendOrderZNSByStatus({
+        phone: String(
+          order.shippingAddress?.phone || order.guestInfo?.phone || ""
+        ),
+        status: "confirm",
+        templateData: {
+          company_name: "SHOPNOW",
+          customer_name: String(
+            order.shippingAddress?.fullName ||
+              order.guestInfo?.fullName ||
+              "Quý khách"
+          ),
+          id: String(order.orderCode || ""),
+          price: (order.totalAmount || 0) + " VND",
+          address: String(
+            order.shippingAddress?.addressLine1 ||
+              order.shippingAddress?.addressLine2 ||
+              ""
+          ),
+          mobile: String(
+            order.shippingAddress?.phone ||
+              order.guestInfo?.phone ||
+              "Chưa có số điện thoại"
+          ),
+          payment: String(
+            order.paymentStatus === "paid" ? "Đã thanh toán" : "Chưa thanh toán"
+          ),
+        },
+        trackingId: `order_${order._id}`,
+      });
+    } catch (err) {
+      console.error("sendOrderZNSByStatus (confirm) error:", err);
+    }
     return res.json({ message: 'Xác nhận thành công', order });
   } catch (err) {
     console.error(err);
