@@ -12,7 +12,6 @@ const {
 const { generateOrderCode } = require("../utils/orderUtils");
 require('dotenv').config();
 const { sendOrderCreatedEmail, sendOrderStatusUpdateEmail } = require("../services/emailService");
-const { sendOrderCreatedEmail } = require("../services/emailService");
 const { sendOrderZNSByStatus } = require("../utils/zaloZNSUtil");
 
 

@@ -493,4 +493,4 @@ async function sendOrderStatusUpdateEmail(order, to, statusType, newStatus) {
 module.exports = {
   sendOrderCreatedEmail,
   sendOrderStatusUpdateEmail,
-};
+};  
