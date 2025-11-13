@@ -62,7 +62,7 @@ function stripDiacritics(str) {
 }
 function normalizeText(str) {
   return stripDiacritics(str).toLowerCase();
-}
+} 
 
 // Cập nhật COLOR_ALIASES thành dạng gồm cả không dấu tự động
 Object.keys(COLOR_ALIASES).forEach(base => {
