@@ -527,7 +527,8 @@ exports.getOrdersAdmin = async (req, res) => {
       userId,            // filter by user
       q,                 // general text search
       dateFrom,
-      dateTo
+      dateTo,
+      date
     } = req.query;
 
   const filter = {};
@@ -571,7 +572,15 @@ exports.getOrdersAdmin = async (req, res) => {
       if (userIds.length) filter.$or.push({ userId: { $in: userIds } });
     }
 
-    if (dateFrom || dateTo) {
+    // support a single `date` param to filter by that whole day (YYYY-MM-DD)
+    if (date) {
+      const parsed = new Date(date);
+      if (!isNaN(parsed.getTime())) {
+        const start = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate(), 0, 0, 0, 0);
+        const end = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate(), 23, 59, 59, 999);
+        filter.createdAt = { $gte: start, $lte: end };
+      }
+    } else if (dateFrom || dateTo) {
       filter.createdAt = {};
       if (dateFrom) filter.createdAt.$gte = new Date(dateFrom);
       if (dateTo) {
