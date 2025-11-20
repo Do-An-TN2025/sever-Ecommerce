@@ -11,6 +11,7 @@ router.get("/best-sellers", productController.getBestSellers);
 router.get("/new", productController.getNewProducts);
 router.get("/details/:slug", productController.getProductDetailsBySlug);
 router.get("/details/:slug/reviews", reviewController.getReviewsBySlug);
+router.get('/reviews/recent-customers', reviewController.getLatestFiveCustomerReviews);
 
 // create or update review (auth)
 router.post('/:productId/reviews', authMiddleware, reviewController.createOrUpdateReview);

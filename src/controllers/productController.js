@@ -53,11 +53,17 @@ exports.updateProduct = async (req, res) => {
 
 exports.deleteProduct = async (req, res) => {
   try {
-    const product = await Product.findByIdAndDelete(req.params.id);
-
+    // First find the product to ensure it exists and to get its id
+    const product = await Product.findById(req.params.id);
     if (!product) return res.status(404).json({ message: "Không tìm thấy sản phẩm" });
 
-    res.json({ message: "Xóa sản phẩm thành công" });
+    // Delete all variants belonging to this product
+    await ProductVariant.deleteMany({ productId: product._id });
+
+    // Then delete the product itself
+    await Product.findByIdAndDelete(req.params.id);
+
+    res.json({ message: "Xóa sản phẩm và các variant liên quan thành công" });
   } catch (err) {
     res.status(500).json({ message: "Lỗi server", error: err.message });
   }

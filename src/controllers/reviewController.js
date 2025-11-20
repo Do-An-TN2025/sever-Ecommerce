@@ -100,3 +100,40 @@ exports.deleteReview = async (req, res) => {
     return res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
+
+// Get latest reviews from 5 most recent distinct customers across the site
+exports.getLatestFiveCustomerReviews = async (req, res) => {
+  try {
+    // Fetch recent reviews sorted by creation time
+    const recentReviews = await ProductReview.find()
+      .sort({ createdAt: -1 })
+      .limit(50) // fetch a buffer to find 5 distinct users
+      .populate('userId', 'firstName lastName avatar')
+      .populate('productId', 'name slug')
+      .lean();
+
+    const usersSeen = new Set();
+    const result = [];
+
+    for (const r of recentReviews) {
+      const uid = String(r.userId?._id || r.userId);
+      if (!uid) continue;
+      if (usersSeen.has(uid)) continue;
+      usersSeen.add(uid);
+      result.push({
+        _id: r._id,
+        product: r.productId || null,
+        user: r.userId || null,
+        rating: r.rating,
+        comment: r.comment,
+        createdAt: r.createdAt
+      });
+      if (result.length >= 5) break;
+    }
+
+    return res.json({ count: result.length, reviews: result });
+  } catch (err) {
+    console.error('getLatestFiveCustomerReviews error', err);
+    return res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};

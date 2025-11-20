@@ -109,6 +109,7 @@ async function createPayOSPayment(paymentBody) {
   };
 
   try {
+    console.log('PayOS request body:', JSON.stringify(requestBody));
     const response = await axios.post(
       'https://api-merchant.payos.vn/v2/payment-requests',
       requestBody,
@@ -120,9 +121,20 @@ async function createPayOSPayment(paymentBody) {
         }
       }
     );
+    console.log('PayOS response:', JSON.stringify(response.data));
+
+    // If PayOS did not return expected checkoutUrl/qrCode, throw with details
+    if (!response.data || !response.data.data || (!response.data.data.checkoutUrl && !response.data.data.qrCode)) {
+      const msg = 'PayOS did not return checkoutUrl/qrCode';
+      console.error(msg, JSON.stringify(response.data));
+      const err = new Error(msg);
+      err.remote = response.data;
+      throw err;
+    }
+
     return response.data;
   } catch (error) {
-    console.error('PayOS API Error:', error.response?.data || error.message);
+    console.error('PayOS API Error:', error.response?.data || error.message || error);
     throw error;
   }
 }
