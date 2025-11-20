@@ -117,8 +117,6 @@ exports.createOrder = async (req, res) => {
       return res.status(400).json({ message: "Thiếu phương thức thanh toán" });
     }
 
-    // hydrate items: resolve variants, prices and images
-    if (!Array.isArray(items)) return res.status(400).json({ message: "items must be an array" });
     const orderItems = await hydrateItems(items);
     const subtotal = orderItems.reduce((sum, item) => sum + (item.price || 0) * (item.quantity || 0), 0);
     const shippingFee = Number(req.body.shippingFee || 0);
@@ -129,7 +127,7 @@ exports.createOrder = async (req, res) => {
 
     // voucher handling
     let voucherSnapshot = null;
-    let discount = 0; 
+    let discount = 0;
     try {
       const prepared = await prepareVoucherSnapshot(voucherCode, orderItems, subtotal, shippingFee, userId);
       if (prepared) {
@@ -184,7 +182,7 @@ exports.createOrder = async (req, res) => {
     }
 
     if (paymentMethod.type !== "PayOS") {
-      baseOrder.orderCode = await generateOrderCode();
+      baseOrder.orderCode = generateOrderCode();
       const order = await Order.create(baseOrder);
       if (userId) {
         await Cart.updateOne(
@@ -213,19 +211,14 @@ exports.createOrder = async (req, res) => {
       return res.status(500).json({ message: "PayOS chưa được cấu hình" });
     }
 
-    // Create both a human-friendly orderCode and a numeric PayOS orderCode
-    const humanOrderCode = await generateOrderCode();
-    // PayOS requires a numeric orderCode field; use timestamp (number) to ensure uniqueness
-    const payosOrderCode = Date.now();
-
+    const orderCode = generateOrderCode();
     const successUrl = returnUrl || `${process.env.CLIENT_URL || "http://localhost:3000"}/payment/success`;
     const failUrl = cancelUrl || `${process.env.CLIENT_URL || "http://localhost:3000"}/payment/cancel`;
 
     const paymentBody = {
-      // ensure orderCode is sent as a number (not a string)
-      orderCode: payosOrderCode,
+      orderCode,
       amount: totalAmount,
-      description: `Order ${humanOrderCode}`,
+      description: `Order ${orderCode}`,
       returnUrl: successUrl,
       cancelUrl: failUrl,
       buyerName: shippingAddress.fullName,
@@ -239,16 +232,12 @@ exports.createOrder = async (req, res) => {
     let paymentData;
     try {
       paymentData = await createPayOSPayment(paymentBody);
-      console.log("PayOS payment created:", paymentData);
     } catch (err) {
       console.error("PayOS create link error:", err?.response?.data || err.message);
       return res.status(502).json({ message: "Không tạo được liên kết thanh toán PayOS" });
     }
 
-    // save the human-friendly orderCode as the order's public code
-    baseOrder.orderCode = humanOrderCode;
-    // keep PayOS's numeric order code for cross-reference (store as string for DB)
-    baseOrder.paymentMethod.payosOrderCode = String(payosOrderCode);
+    baseOrder.orderCode = orderCode;
     baseOrder.paymentMethod.transactionId = paymentData.data?.orderCode || paymentData.data?.paymentLinkId || null;
     baseOrder.paymentMethod.invoiceUrl = paymentData.data?.checkoutUrl;
     baseOrder.paymentMethod.expiresAt = paymentData.data?.expiredAt ? new Date(paymentData.data.expiredAt * 1000) : null;
@@ -286,22 +275,10 @@ exports.handlePayOSWebhook = async (req, res) => {
   try {
     const payload = req.body;
     console.log("PayOS Webhook received:", payload);
-
-    // PayOS may send different fields; try to resolve the numeric payos code or other ids
-    const payosCode = payload.orderCode || payload.data?.orderCode || payload.transactionId || payload.paymentLinkId;
-
-    // Try multiple lookups: human orderCode, stored payosOrderCode, or transactionId
-    const order = await Order.findOne({
-      $or: [
-        { orderCode: payosCode },
-        { 'paymentMethod.payosOrderCode': String(payosCode) },
-        { 'paymentMethod.transactionId': String(payosCode) },
-        { 'paymentMethod.transactionId': payload.transactionId }
-      ]
-    });
-
+    const orderCode = payload.orderCode || payload.data?.orderCode;
+    const order = await Order.findOne({ orderCode });
     if (!order) {
-      console.log("Order not found for PayOS identifiers:", payosCode, payload.transactionId);
+      console.log("Order not found:", payload.orderCode);
       return res.status(200).json({ message: "Không tìm thấy đơn" });
     }
 
