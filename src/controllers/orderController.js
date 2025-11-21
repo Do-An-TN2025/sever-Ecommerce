@@ -3,6 +3,7 @@ const Order = require("../models/Order");
 const Cart = require("../models/Cart");
 const Voucher = require("../models/Voucher");
 const User = require("../models/User");
+const OrderReport = require("../models/OrderReport");
 const {
   hydrateItems,
   decreaseStock,
@@ -435,6 +436,140 @@ exports.cancelOrder = async (req, res) => {
   } catch (error) {
     console.error("cancelOrder error:", error);
     res.status(500).json({ message: "Lỗi hủy đơn hàng" });
+  }
+};
+
+// User: request cancellation -> create a report and mark order as 'reported'
+exports.requestOrderCancellation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const userId = req.user?.id;
+
+    if (!reason || !String(reason).trim()) return res.status(400).json({ message: 'Vui lòng cung cấp lý do hủy đơn' });
+
+    const order = await Order.findById(id);
+    if (!order) return res.status(404).json({ message: 'Không tìm thấy đơn hàng' });
+
+    // Only the owner can request cancellation (if order has userId)
+    if (order.userId && userId && order.userId.toString() !== userId.toString()) {
+      return res.status(403).json({ message: 'Không có quyền trên đơn hàng này' });
+    }
+
+    // allow only pending or confirmed
+    if (!['pending', 'confirmed'].includes(order.orderStatus)) {
+      return res.status(400).json({ message: 'Chỉ có thể yêu cầu hủy đơn ở trạng thái pending hoặc confirmed' });
+    }
+
+    const report = await OrderReport.create({
+      orderId: order._id,
+      userId: order.userId || userId || undefined,
+      reason: String(reason).trim(),
+      previousStatus: order.orderStatus
+    });
+
+    order.orderStatus = 'reported';
+    await order.save();
+
+    return res.json({ message: 'Yêu cầu hủy đã được gửi lên hệ thống', report });
+  } catch (err) {
+    console.error('requestOrderCancellation error:', err);
+    return res.status(500).json({ message: 'Lỗi khi gửi yêu cầu hủy' });
+  }
+};
+
+// Admin: list reports (with pagination)
+exports.getOrderReportsAdmin = async (req, res) => {
+  try {
+    if (req.user?.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, parseInt(req.query.limit) || 20);
+
+    const filter = {};
+    if (req.query.status) filter.status = req.query.status;
+    if (req.query.orderId) filter.orderId = req.query.orderId;
+
+    const total = await OrderReport.countDocuments(filter);
+    const reports = await OrderReport.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('orderId')
+      .populate('userId', 'firstName lastName email phone')
+      .lean();
+
+    return res.json({ meta: { total, page, limit, pages: Math.ceil(total / limit) }, data: reports });
+  } catch (err) {
+    console.error('getOrderReportsAdmin error:', err);
+    return res.status(500).json({ message: 'Lỗi khi lấy danh sách báo cáo' });
+  }
+};
+
+// Admin: approve a report -> actually cancel the order
+exports.approveOrderReport = async (req, res) => {
+  try {
+    if (req.user?.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+
+    const { id } = req.params; // report id
+    const adminId = req.user?.id;
+
+    const report = await OrderReport.findById(id);
+    if (!report) return res.status(404).json({ message: 'Không tìm thấy báo cáo' });
+    if (report.status !== 'pending') return res.status(400).json({ message: 'Báo cáo đã được xử lý' });
+
+    const order = await Order.findById(report.orderId);
+    if (!order) return res.status(404).json({ message: 'Không tìm thấy đơn hàng liên quan' });
+
+    // Only proceed if order is in reported state (safety check)
+    if (order.orderStatus !== 'reported') {
+      // still allow admin to cancel, but warn
+      console.warn('approveOrderReport: order not in reported state, proceeding to cancel anyway', order._id.toString());
+    }
+
+    // mark cancelled
+    order.orderStatus = 'cancelled';
+    if (!order.paymentMethod) order.paymentMethod = {};
+    order.paymentMethod.status = 'cancelled';
+    order.paymentMethod.cancelledAt = order.paymentMethod.cancelledAt || new Date();
+
+    // restore stock
+    try {
+      await restoreStock(order.items);
+    } catch (err) {
+      console.error('restoreStock error (approve report):', err);
+    }
+
+    // return items to user's cart
+    if (order.userId) {
+      const cartItems = order.items.map(item => ({
+        variantId: item.variantId,
+        productId: item.productId,
+        quantity: item.quantity,
+        size: item.size,
+        price: item.price,
+        discountPrice: item.discountPrice || item.price || 0,
+        finalPrice: item.finalPrice || item.price || 0,
+        name: item.name || ''
+      }));
+      try {
+        await Cart.updateOne({ userId: order.userId }, { $push: { items: { $each: cartItems } } }, { upsert: true });
+      } catch (err) {
+        console.error('push back to cart error (approve report):', err);
+      }
+    }
+
+    await order.save();
+
+    report.status = 'approved';
+    report.processedBy = adminId;
+    report.processedAt = new Date();
+    await report.save();
+
+    return res.json({ message: 'Báo cáo đã được duyệt và đơn hàng đã hủy', report, order });
+  } catch (err) {
+    console.error('approveOrderReport error:', err);
+    return res.status(500).json({ message: 'Lỗi khi xử lý báo cáo' });
   }
 };
 
@@ -987,3 +1122,7 @@ exports.confirmOrderByToken = async (req, res) => {
     return res.status(500).json({ message: 'Lỗi server' });
   }
 };
+
+
+
+
