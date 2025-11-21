@@ -80,8 +80,9 @@ exports.getCart = async (req, res) => {
     for (const it of raw) {
       const variantId = it.variantId ? String(it.variantId) : '';
       const size = it.size || '';
+      const color = it.color || '';
       if (!variantId) continue; // skip invalid items (schema expects variantId)
-      const key = `${variantId}||${size}`;
+      const key = `${variantId}||${size}||${color}`;
       const qty = Number(it.quantity) || 1;
       const price = Number(it.price) || 0;
       const discountPrice = Number(it.discountPrice) || 0;
@@ -96,11 +97,13 @@ exports.getCart = async (req, res) => {
           productId: it.productId ? String(it.productId) : null,
           variantId,
           size,
+          color,
           quantity: qty,
           price,
           discountPrice,
           finalPrice,
-          name: it.name || ''
+          name: it.name || '',
+          key: it.key || null
         });
       }
     }
@@ -150,7 +153,9 @@ exports.getCart = async (req, res) => {
           ...it,
           name: productInfo?.name || it.name || '',
           product: productInfo,
-          variant: variantInfo
+          variant: variantInfo,
+          color: it.color || null,
+          key: it.key || null
         };
       });
     } catch (e) {
@@ -170,11 +175,13 @@ exports.getCart = async (req, res) => {
         productId: i.productId,
         variantId: i.variantId,
         size: i.size,
+        color: i.color || undefined,
         quantity: i.quantity,
         name: i.name || '',
         price: i.price,
         discountPrice: i.discountPrice,
         finalPrice: i.finalPrice,
+        key: i.key || undefined
       }));
       cart.updatedAt = new Date();
       try { await cart.save(); } catch (err) { /* non-fatal */ }
@@ -262,8 +269,16 @@ exports.addItem = async (req, res) => {
       existing = cart.items.find(i => String(i.productId) === String(productId) && i.size === size);
     }
 
+    // resolve color/colorCode from incoming or variant fallback
+    const resolvedColor = color || variant?.color || null;
+    const resolvedColorCode = incoming.colorCode || variant?.colorCode || null;
+
     if (existing) {
       existing.quantity = (existing.quantity || 0) + qty;
+      // preserve/update color and image if provided or fallback from variant
+      existing.color = resolvedColor || existing.color;
+      if (resolvedColorCode) existing.colorCode = resolvedColorCode;
+      if (incoming.image) existing.image = incoming.image;
     } else {
       const newItem = {
         productId,
@@ -273,7 +288,9 @@ exports.addItem = async (req, res) => {
         price,
         discountPrice,
         finalPrice,
-        name
+        name,
+        color: resolvedColor || undefined,
+        colorCode: resolvedColorCode || undefined
       };
       if (key) newItem.key = key;
       if (color) newItem.color = color;
