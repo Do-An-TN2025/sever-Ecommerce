@@ -3,6 +3,7 @@ const Category = require("../models/Category");
 const ProductVariant = require("../models/ProductVariant");
 const mlService = require("../services/mlRecommenderService");
 const Order = require("../models/Order");
+const ProductRecentlyViewed = require('../models/ProductRecentlyViewed');
 
 exports.createProduct = async (req, res) => {
   try {
@@ -1064,6 +1065,36 @@ exports.getRecentlyViewedProducts = async (req, res) => {
     // map slug -> product for quick lookup
     const prodBySlug = {};
     products.forEach(p => { prodBySlug[p.slug] = p; });
+
+    // Save slugs client provided into ProductRecentlyViewed (non-blocking)
+    (async () => {
+      try {
+        // Determine identifier: prefer user, then sessionId from body/query/cookie, else 'public'
+        const sessionId = (req.body && req.body.sessionId) || (req.query && req.query.sessionId) || (req.cookies && req.cookies.sessionId) || 'public';
+        const userId = req.user ? req.user.id : null;
+        const key = userId ? { userId } : { sessionId };
+
+        const items = uniqSlugs.map(s => ({ slug: s, viewedAt: new Date() }));
+        if (!items.length) return;
+
+        const slugsToRemove = items.map(it => it.slug);
+        const MAX_RECENT = 20;
+
+        await ProductRecentlyViewed.findOneAndUpdate(
+          key,
+          { $pull: { products: { slug: { $in: slugsToRemove } } } },
+          { upsert: true }
+        );
+
+        await ProductRecentlyViewed.findOneAndUpdate(
+          key,
+          { $push: { products: { $each: items, $position: 0, $slice: MAX_RECENT } } },
+          { upsert: true }
+        );
+      } catch (e) {
+        console.error('Error saving recently-viewed slugs (non-fatal):', e);
+      }
+    })();
 
     const result = [];
     for (const s of uniqSlugs) {

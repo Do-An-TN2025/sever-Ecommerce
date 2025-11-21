@@ -12,7 +12,6 @@ const cartItemSchema = new mongoose.Schema({
   discountPrice: Number,  // giá sau giảm (nếu có)
   finalPrice: Number      // finalPrice = discountPrice || price
   ,
-  // optional client-provided key and image
   key: { type: String },
   image: { type: String }
 }, { _id: true });
