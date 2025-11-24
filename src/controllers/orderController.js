@@ -3,6 +3,7 @@ const Order = require("../models/Order");
 const Cart = require("../models/Cart");
 const Voucher = require("../models/Voucher");
 const User = require("../models/User");
+const OrderReport = require("../models/OrderReport");
 const {
   hydrateItems,
   decreaseStock,
@@ -13,6 +14,10 @@ const { generateOrderCode } = require("../utils/orderUtils");
 require('dotenv').config();
 const { sendOrderCreatedEmail, sendOrderStatusUpdateEmail } = require("../services/emailService");
 const { sendOrderZNSByStatus } = require("../utils/zaloZNSUtil");
+const fs = require('fs');
+const path = require('path');
+let puppeteer;
+try { puppeteer = require('puppeteer'); } catch (e) { puppeteer = null; }
 
 
 const PAYOS_CLIENT_ID = process.env.PAYOS_CLIENT_ID;
@@ -438,6 +443,140 @@ exports.cancelOrder = async (req, res) => {
   }
 };
 
+// User: request cancellation -> create a report and mark order as 'reported'
+exports.requestOrderCancellation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const userId = req.user?.id;
+
+    if (!reason || !String(reason).trim()) return res.status(400).json({ message: 'Vui lòng cung cấp lý do hủy đơn' });
+
+    const order = await Order.findById(id);
+    if (!order) return res.status(404).json({ message: 'Không tìm thấy đơn hàng' });
+
+    // Only the owner can request cancellation (if order has userId)
+    if (order.userId && userId && order.userId.toString() !== userId.toString()) {
+      return res.status(403).json({ message: 'Không có quyền trên đơn hàng này' });
+    }
+
+    // allow only pending or confirmed
+    if (!['pending', 'confirmed'].includes(order.orderStatus)) {
+      return res.status(400).json({ message: 'Chỉ có thể yêu cầu hủy đơn ở trạng thái pending hoặc confirmed' });
+    }
+
+    const report = await OrderReport.create({
+      orderId: order._id,
+      userId: order.userId || userId || undefined,
+      reason: String(reason).trim(),
+      previousStatus: order.orderStatus
+    });
+
+    order.orderStatus = 'reported';
+    await order.save();
+
+    return res.json({ message: 'Yêu cầu hủy đã được gửi lên hệ thống', report });
+  } catch (err) {
+    console.error('requestOrderCancellation error:', err);
+    return res.status(500).json({ message: 'Lỗi khi gửi yêu cầu hủy' });
+  }
+};
+
+// Admin: list reports (with pagination)
+exports.getOrderReportsAdmin = async (req, res) => {
+  try {
+    if (req.user?.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, parseInt(req.query.limit) || 20);
+
+    const filter = {};
+    if (req.query.status) filter.status = req.query.status;
+    if (req.query.orderId) filter.orderId = req.query.orderId;
+
+    const total = await OrderReport.countDocuments(filter);
+    const reports = await OrderReport.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('orderId')
+      .populate('userId', 'firstName lastName email phone')
+      .lean();
+
+    return res.json({ meta: { total, page, limit, pages: Math.ceil(total / limit) }, data: reports });
+  } catch (err) {
+    console.error('getOrderReportsAdmin error:', err);
+    return res.status(500).json({ message: 'Lỗi khi lấy danh sách báo cáo' });
+  }
+};
+
+// Admin: approve a report -> actually cancel the order
+exports.approveOrderReport = async (req, res) => {
+  try {
+    if (req.user?.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+
+    const { id } = req.params; // report id
+    const adminId = req.user?.id;
+
+    const report = await OrderReport.findById(id);
+    if (!report) return res.status(404).json({ message: 'Không tìm thấy báo cáo' });
+    if (report.status !== 'pending') return res.status(400).json({ message: 'Báo cáo đã được xử lý' });
+
+    const order = await Order.findById(report.orderId);
+    if (!order) return res.status(404).json({ message: 'Không tìm thấy đơn hàng liên quan' });
+
+    // Only proceed if order is in reported state (safety check)
+    if (order.orderStatus !== 'reported') {
+      // still allow admin to cancel, but warn
+      console.warn('approveOrderReport: order not in reported state, proceeding to cancel anyway', order._id.toString());
+    }
+
+    // mark cancelled
+    order.orderStatus = 'cancelled';
+    if (!order.paymentMethod) order.paymentMethod = {};
+    order.paymentMethod.status = 'cancelled';
+    order.paymentMethod.cancelledAt = order.paymentMethod.cancelledAt || new Date();
+
+    // restore stock
+    try {
+      await restoreStock(order.items);
+    } catch (err) {
+      console.error('restoreStock error (approve report):', err);
+    }
+
+    // return items to user's cart
+    if (order.userId) {
+      const cartItems = order.items.map(item => ({
+        variantId: item.variantId,
+        productId: item.productId,
+        quantity: item.quantity,
+        size: item.size,
+        price: item.price,
+        discountPrice: item.discountPrice || item.price || 0,
+        finalPrice: item.finalPrice || item.price || 0,
+        name: item.name || ''
+      }));
+      try {
+        await Cart.updateOne({ userId: order.userId }, { $push: { items: { $each: cartItems } } }, { upsert: true });
+      } catch (err) {
+        console.error('push back to cart error (approve report):', err);
+      }
+    }
+
+    await order.save();
+
+    report.status = 'approved';
+    report.processedBy = adminId;
+    report.processedAt = new Date();
+    await report.save();
+
+    return res.json({ message: 'Báo cáo đã được duyệt và đơn hàng đã hủy', report, order });
+  } catch (err) {
+    console.error('approveOrderReport error:', err);
+    return res.status(500).json({ message: 'Lỗi khi xử lý báo cáo' });
+  }
+};
+
 exports.getMyOrders = async (req, res) => {
   try {
     const userId = req.user?.id;
@@ -505,6 +644,123 @@ exports.getOrderByCode = async (req, res) => {
   } catch (error) {
     console.error("getOrderByCode error:", error);
     res.status(500).json({ message: "Lỗi lấy thông tin đơn hàng" });
+  }
+};
+
+// Single API: accepts either query `id` (order _id) or `orderCode` — renders HTML template with Puppeteer
+function fmtVND(value) {
+  try { return new Intl.NumberFormat('vi-VN').format(value) + ' ₫'; } catch (e) { return String(value || 0) + ' ₫'; }
+}
+
+async function renderInvoicePdfFromTemplate(order) {
+  if (!puppeteer) throw new Error('puppeteer not installed');
+
+  // Read template - prefer repository-level `templates/`, fall back to `src/templates/`
+  let tplPath = path.join(process.cwd(), 'templates', 'invoice.html');
+  if (!fs.existsSync(tplPath)) {
+    // fallback for older layout where templates live under src/
+    const alt = path.join(__dirname, '..', 'templates', 'invoice.html');
+    if (fs.existsSync(alt)) tplPath = alt;
+  }
+
+  if (!fs.existsSync(tplPath)) {
+    throw new Error(`Invoice template not found. Looked for: ${path.join(process.cwd(), 'templates', 'invoice.html')} and ${path.join(__dirname, '..', 'templates', 'invoice.html')}`);
+  }
+
+  const tpl = fs.readFileSync(tplPath, 'utf8');
+
+  // Company placeholders
+  const company_name = process.env.COMPANY_NAME || 'SHOP';
+  const company_address = process.env.COMPANY_ADDRESS || '';
+  const company_phone = process.env.COMPANY_PHONE || '';
+  const company_email = process.env.COMPANY_EMAIL || '';
+  const tax_id = process.env.TAX_ID || '';
+  const logoUrl = process.env.COMPANY_LOGO_URL || '';
+  const logoHtml = logoUrl ? `<img src="${logoUrl}" alt="logo" style="max-height:60px"/>` : '';
+
+  // Items rows
+  const items = order.items || [];
+  const itemsRows = items.map(it => {
+    const name = it.name || (it.productId && it.productId.name) || '';
+    const qty = it.quantity || 0;
+    const price = fmtVND(it.price || 0);
+    const total = fmtVND((it.price || 0) * qty);
+    // image fallback: item.image, item.images[0], product.images[0], variant images
+    const img = (it.image || (it.images && it.images[0]) || (it.productId && it.productId.images && it.productId.images[0]) || (it.variantId && it.variantId.images && it.variantId.images[0]) || '');
+    const imgHtml = img ? `<td><img class="product-thumb" src="${img}" alt="" /></td>` : `<td></td>`;
+    const meta = [];
+    if (it.sku) meta.push(it.sku);
+    if (it.size) meta.push('Size: ' + it.size);
+    const metaHtml = meta.length ? `<div class="product-meta">${meta.join(' • ')}</div>` : '';
+    return `<tr>${imgHtml}<td><div class="product-name">${name}</div>${metaHtml}</td><td class="text-right">${qty}</td><td class="text-right">${price}</td><td class="text-right">${total}</td></tr>`;
+  }).join('');
+
+  const html = tpl
+    .replace(/{{company_logo}}/g, logoHtml)
+    .replace(/{{company_name}}/g, company_name)
+    .replace(/{{company_address}}/g, company_address)
+    .replace(/{{company_phone}}/g, company_phone)
+    .replace(/{{company_email}}/g, company_email)
+    .replace(/{{tax_id}}/g, tax_id)
+    .replace(/{{ship_fullName}}/g, (order.shippingAddress?.fullName || order.guestInfo?.fullName || ''))
+    .replace(/{{ship_address}}/g, (order.shippingAddress?.addressLine1 || '') + ' ' + (order.shippingAddress?.addressLine2 || ''))
+    .replace(/{{ship_phone}}/g, (order.shippingAddress?.phone || order.guestInfo?.phone || ''))
+    .replace(/{{ship_email}}/g, (order.shippingAddress?.email || order.guestInfo?.email || ''))
+    .replace(/{{order_code}}/g, order.orderCode || '')
+    .replace(/{{order_date}}/g, new Date(order.createdAt || Date.now()).toLocaleString('vi-VN'))
+    .replace(/{{order_status}}/g, order.orderStatus || '')
+    .replace(/{{items_rows}}/g, itemsRows)
+    .replace(/{{subtotal}}/g, fmtVND(order.subtotal || 0))
+    .replace(/{{shippingFee}}/g, fmtVND(order.shippingFee || 0))
+    .replace(/{{discount}}/g, fmtVND(order.discount || 0))
+    .replace(/{{totalAmount}}/g, fmtVND(order.totalAmount || 0))
+    .replace(/{{company_name}}/g, company_name);
+
+  // Launch puppeteer and render
+  const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+  const page = await browser.newPage();
+  await page.setContent(html, { waitUntil: 'networkidle0' });
+
+  const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' } });
+
+  await browser.close();
+  return pdfBuffer;
+}
+
+exports.getOrderInvoice = async (req, res) => {
+  try {
+    const { id, orderCode } = req.query;
+    if (!id && !orderCode) return res.status(400).json({ message: 'Vui lòng cung cấp `id` hoặc `orderCode`' });
+
+    let order;
+    if (id) {
+      if (!req.user) return res.status(401).json({ message: 'Unauthorized' });
+      order = await Order.findById(id).populate('items.productId', 'name').lean();
+      if (!order) return res.status(404).json({ message: 'Không tìm thấy đơn hàng' });
+      if (req.user.role !== 'admin') {
+        if (!order.userId && order.guestInfo) return res.status(403).json({ message: 'Không có quyền truy cập hóa đơn' });
+        const orderUserId = order.userId && order.userId._id ? order.userId._id : order.userId;
+        if (orderUserId && req.user.id && orderUserId.toString() !== req.user.id.toString()) return res.status(403).json({ message: 'Không có quyền truy cập hóa đơn' });
+      }
+    } else {
+      order = await Order.findOne({ orderCode }).populate('items.productId', 'name').lean();
+      if (!order) return res.status(404).json({ message: 'Không tìm thấy đơn hàng' });
+    }
+
+    // Render PDF using Puppeteer
+    if (!puppeteer) {
+      return res.status(500).json({ message: 'PDF renderer not available. Please run `npm install puppeteer`.' });
+    }
+
+    const pdfBuffer = await renderInvoicePdfFromTemplate(order);
+
+    const filename = `invoice_${order.orderCode || order._id}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(pdfBuffer);
+  } catch (err) {
+    console.error('getOrderInvoice error:', err);
+    return res.status(500).json({ message: 'Lỗi xuất hóa đơn' });
   }
 };
 
@@ -987,3 +1243,7 @@ exports.confirmOrderByToken = async (req, res) => {
     return res.status(500).json({ message: 'Lỗi server' });
   }
 };
+
+
+
+

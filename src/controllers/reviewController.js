@@ -67,6 +67,36 @@ exports.getReviewsBySlug = async (req, res) => {
   }
 };
 
+// Get all reviews (admin) with pagination and optional filters
+exports.getAllReviews = async (req, res) => {
+  try {
+    const { page = 1, limit = 20, productId, userId, minRating, maxRating, sort = '-createdAt' } = req.query;
+    const PAGE = Math.max(1, parseInt(page));
+    const LIMIT = Math.min(200, Math.max(1, parseInt(limit)));
+
+    const filter = {};
+    if (productId) filter.productId = productId;
+    if (userId) filter.userId = userId;
+    if (minRating || maxRating) filter.rating = {};
+    if (minRating) filter.rating.$gte = Number(minRating);
+    if (maxRating) filter.rating.$lte = Number(maxRating);
+
+    const total = await ProductReview.countDocuments(filter);
+    const reviews = await ProductReview.find(filter)
+      .sort(sort)
+      .skip((PAGE - 1) * LIMIT)
+      .limit(LIMIT)
+      .populate('userId', 'firstName lastName email avatar')
+      .populate('productId', 'name slug')
+      .lean();
+
+    return res.json({ total, page: PAGE, perPage: LIMIT, reviews });
+  } catch (err) {
+    console.error('getAllReviews error', err);
+    return res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
 // Delete review by id (owner or admin)
 exports.deleteReview = async (req, res) => {
   try {

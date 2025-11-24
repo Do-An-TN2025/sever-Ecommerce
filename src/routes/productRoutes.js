@@ -13,6 +13,10 @@ router.get("/details/:slug", productController.getProductDetailsBySlug);
 router.get("/details/:slug/reviews", reviewController.getReviewsBySlug);
 router.get('/reviews/recent-customers', reviewController.getLatestFiveCustomerReviews);
 
+
+// Admin: list all reviews with filters/pagination
+router.get('/reviews', reviewController.getAllReviews);
+
 // create or update review (auth)
 router.post('/:productId/reviews', authMiddleware, reviewController.createOrUpdateReview);
 
