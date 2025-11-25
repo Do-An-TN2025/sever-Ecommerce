@@ -143,13 +143,16 @@ exports.getProductBySlugCategory = async (req, res) => {
       ? { [sortBy]: sortOrder === 'desc' ? -1 : 1 }
       : { createdAt: -1 };
 
+    // Fetch all base products matching the productFilter (we will apply
+    // variant/price/color/size filters in-memory and then paginate the final list).
+    // Note: for very large categories you may want to add a sensible cap or
+    // move some filters to DB-level to avoid O(N) memory usage.
     const products = await Product.find(productFilter)
       .populate('categoryId', 'name slug')
       .sort(baseSort)
-      .skip((PAGE - 1) * LIMIT)
-      .limit(LIMIT);
+      .lean();
 
-    // 3. Build variants data
+    // 3. Build variants data for all matched products
     const productsWithVariants = await Promise.all(
       products.map(async (product) => {
         const variants = await ProductVariant.find({ productId: product._id }).lean();
@@ -265,8 +268,8 @@ exports.getProductBySlugCategory = async (req, res) => {
       );
     }
 
-    // 6. Tổng (dựa theo productFilter ban đầu, không tính min/max/color/size)
-    const totalBase = await Product.countDocuments(productFilter);
+    // 6. Tổng sau khi áp dụng các filter phụ (minPrice/color/size)
+    const totalAfterFilter = filteredProducts.length;
 
     // 7. Pagination thủ công sau filter
     const start = (PAGE - 1) * LIMIT;
@@ -277,8 +280,8 @@ exports.getProductBySlugCategory = async (req, res) => {
       products: paginatedProducts,
       pagination: {
         currentPage: PAGE,
-        totalPages: Math.ceil(totalBase / LIMIT),
-        total: totalBase,
+        totalPages: Math.ceil(totalAfterFilter / LIMIT),
+        total: totalAfterFilter,
         limit: LIMIT,
         returned: paginatedProducts.length,
         afterFilterCount: filteredProducts.length
