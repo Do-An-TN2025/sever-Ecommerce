@@ -35,7 +35,6 @@
     .footer { clear:both; margin-top:34px; text-align:center; font-size:11px; color:#666 }
     .signature { margin-top:40px; display:flex; justify-content:space-between }
     .signature div { width:45%; text-align:center }
-    .signature-img { display:block; margin:18px auto 8px; max-width:220px; max-height:80px; object-fit:contain }
     .page-footer { position:fixed; bottom:8px; width:100%; text-align:center; font-size:10px; color:#999 }
     /* product name wrap */
     .product-name { font-weight:600; color:#222 }
@@ -47,22 +46,25 @@
     <div class="header">
       <div class="company">
         {{company_logo}}
-        <div class="name">{{company_name}}</div>
-        <div class="meta">{{company_address}}<br/>MST: {{tax_id}}</div>
+        <div style="margin-top:6px">{{company_name}}</div>
+        <div style="font-size:11px;color:#555">{{company_address}}</div>
+        <div style="font-size:11px;color:#555">MST: {{tax_id}}</div>
       </div>
-      <div class="invoice-info">
-        <span class="title">HÓA ĐƠN BÁN HÀNG</span>
-        <div class="small">{{company_phone}} • {{company_email}}</div>
+      <div>
+        <div style="text-align:right">{{company_phone}}</div>
+        <div style="text-align:right;font-size:11px;color:#666">{{company_email}}</div>
       </div>
     </div>
+
+    <div class="title">HÓA ĐƠN BÁN HÀNG</div>
 
     <div class="meta">
       <div class="customer">
         <strong>Người nhận</strong>
         <div>{{ship_fullName}}</div>
-        <div class="muted">{{ship_address}}</div>
-        <div class="muted">{{ship_phone}}</div>
-        <div class="muted">{{ship_email}}</div>
+        <div style="font-size:11px;color:#555">{{ship_address}}</div>
+        <div style="font-size:11px;color:#555">{{ship_phone}}</div>
+        <div style="font-size:11px;color:#555">{{ship_email}}</div>
       </div>
       <div class="order-meta">
         <div><strong>Mã đơn:</strong> {{order_code}}</div>
@@ -74,10 +76,11 @@
     <table class="items-table">
       <thead>
         <tr>
-          <th>Sản phẩm</th>
-          <th class="text-right">SL</th>
-          <th class="text-right">Đơn giá</th>
-          <th class="text-right">Tổng</th>
+          <th style="width:12%"></th>
+          <th style="width:48%">Sản phẩm</th>
+          <th style="width:10%">SL</th>
+          <th style="width:15%" class="text-right">Đơn giá</th>
+          <th style="width:15%" class="text-right">Tổng</th>
         </tr>
       </thead>
       <tbody>
@@ -109,11 +112,11 @@
     <div class="signature">
       <div>
         <div>Người bán</div>
-        <div>{{seller_signature}}</div>
+        <div style="margin-top:60px">(Ký, ghi rõ họ tên)</div>
       </div>
       <div>
         <div>Người nhận</div>
-        <div>{{recipient_signature}}</div>
+        <div style="margin-top:60px">(Ký, ghi rõ họ tên)</div>
       </div>
     </div>
 
