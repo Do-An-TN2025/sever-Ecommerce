@@ -24,7 +24,6 @@ async function sendZNS({
       console.warn("Chưa cấu hình ZALO_ACCESS_TOKEN");
       return;
     }
-
     const response = await axios.post(
       "https://business.openapi.zalo.me/message/template",
       {
@@ -32,7 +31,6 @@ async function sendZNS({
         template_id: templateId,
         template_data: templateData,
         tracking_id: trackingId,
-        sending_mode: sendingMode,
       },
       {
         headers: {
