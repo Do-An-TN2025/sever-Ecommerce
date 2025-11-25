@@ -670,13 +670,18 @@ async function renderInvoicePdfFromTemplate(order) {
   const tpl = fs.readFileSync(tplPath, 'utf8');
 
   // Company placeholders
-  const company_name = process.env.COMPANY_NAME || 'SHOP';
+  const company_name = process.env.COMPANY_NAME || 'SHOPNOW';
   const company_address = process.env.COMPANY_ADDRESS || '';
   const company_phone = process.env.COMPANY_PHONE || '';
   const company_email = process.env.COMPANY_EMAIL || '';
-  const tax_id = process.env.TAX_ID || '';
+  const tax_id = process.env.TAX_ID || 'Chưa có mã số thuế';
   const logoUrl = process.env.COMPANY_LOGO_URL || '';
   const logoHtml = logoUrl ? `<img src="${logoUrl}" alt="logo" style="max-height:60px"/>` : '';
+  // Signature support: seller signature from env, recipient signature from order if available
+  const sellerSignatureUrl = process.env.COMPANY_SIGNATURE_URL || '';
+  const sellerSignatureHtml = sellerSignatureUrl ? `<img src="${sellerSignatureUrl}" class="signature-img" alt="signature"/>` : `<div style="margin-top:60px">(Ký, ghi rõ họ tên)</div>`;
+  const recipientSignatureImg = order.recipientSignature || order.signatureImage || (order.signatures && order.signatures.recipient) || '';
+  const recipientSignatureHtml = recipientSignatureImg ? `<img src="${recipientSignatureImg}" class="signature-img" alt="recipient-signature"/>` : `<div style="margin-top:60px">(Ký, ghi rõ họ tên)</div>`;
 
   // Items rows
   const items = order.items || [];
@@ -687,12 +692,14 @@ async function renderInvoicePdfFromTemplate(order) {
     const total = fmtVND((it.price || 0) * qty);
     // image fallback: item.image, item.images[0], product.images[0], variant images
     const img = (it.image || (it.images && it.images[0]) || (it.productId && it.productId.images && it.productId.images[0]) || (it.variantId && it.variantId.images && it.variantId.images[0]) || '');
-    const imgHtml = img ? `<td><img class="product-thumb" src="${img}" alt="" /></td>` : `<td></td>`;
+    const imgTag = img ? `<img class="product-thumb" src="${img}" alt="" />` : '';
     const meta = [];
     if (it.sku) meta.push(it.sku);
-    if (it.size) meta.push('Size: ' + it.size);
+    if (it.size) meta.push('Size: ' + it.size); 
     const metaHtml = meta.length ? `<div class="product-meta">${meta.join(' • ')}</div>` : '';
-    return `<tr>${imgHtml}<td><div class="product-name">${name}</div>${metaHtml}</td><td class="text-right">${qty}</td><td class="text-right">${price}</td><td class="text-right">${total}</td></tr>`;
+    // product cell now includes image + name/meta in one column for cleaner layout
+    const productCell = `<td><div class="product-item">${imgTag}<div><div class="product-name">${name}</div>${metaHtml}</div></div></td>`;
+    return `<tr>${productCell}<td class="text-right">${qty}</td><td class="text-right">${price}</td><td class="text-right">${total}</td></tr>`;
   }).join('');
 
   const html = tpl
@@ -710,6 +717,8 @@ async function renderInvoicePdfFromTemplate(order) {
     .replace(/{{order_date}}/g, new Date(order.createdAt || Date.now()).toLocaleString('vi-VN'))
     .replace(/{{order_status}}/g, order.orderStatus || '')
     .replace(/{{items_rows}}/g, itemsRows)
+    .replace(/{{seller_signature}}/g, sellerSignatureHtml)
+    .replace(/{{recipient_signature}}/g, recipientSignatureHtml)
     .replace(/{{subtotal}}/g, fmtVND(order.subtotal || 0))
     .replace(/{{shippingFee}}/g, fmtVND(order.shippingFee || 0))
     .replace(/{{discount}}/g, fmtVND(order.discount || 0))

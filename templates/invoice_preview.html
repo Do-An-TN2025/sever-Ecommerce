@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Hóa đơn - Preview</title>
+  <style>
+    /* Reuse the same styles from invoice template for accurate preview */
+    @page { margin: 18mm }
+    body { font-family: Arial, Helvetica, sans-serif; color: #222; font-size: 12px; }
+    :root { --brand: #0a58ca; --muted:#6c757d; --panel:#f5f7fa; --accent:#eef5ff }
+    .invoice { max-width: 820px; margin: 18px auto; padding: 22px; border: 1px solid #e6e9ef; background: #fff }
+    .header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; border-bottom:3px solid var(--accent); padding-bottom:14px }
+    .company { text-align:left; max-width:60% }
+    .company img { max-height:64px; display:block }
+    .company .name { font-size:16px; font-weight:700; color:#111; margin-top:6px }
+    .company .meta { font-size:11px; color:var(--muted); margin-top:4px }
+    .invoice-info { text-align:right; min-width:220px }
+    .invoice-info .title { display:block; font-size:18px; font-weight:800; color:var(--brand); margin-bottom:6px }
+    .invoice-info .small { font-size:11px; color:var(--muted) }
+    .meta { margin-top:16px; display:flex; justify-content:space-between; align-items:flex-start; gap:16px }
+    .customer { width:52%; padding-right:6px; background:transparent }
+    .customer strong { display:block; margin-bottom:6px }
+    .order-meta { width:46%; text-align:right; font-size:13px }
+    .order-meta div { margin-bottom:6px }
+    table { width:100%; border-collapse:collapse; margin-top:18px; font-size:13px }
+    th, td { padding:12px 10px; vertical-align:middle }
+    thead th { background:#fbfcfe; color:#333; border-bottom:2px solid #eef2fb; font-weight:700 }
+    tbody tr { border-bottom:1px solid #f0f2f7 }
+    .product-thumb { width:64px; height:64px; object-fit:cover; border-radius:8px; border:1px solid #eef2f8 }
+    .product-item { display:flex; gap:12px; align-items:center }
+    .product-name { font-weight:700; color:#111; font-size:13px }
+    .product-meta { font-size:11px; color:var(--muted); margin-top:4px }
+    .text-right { text-align:right }
+    .muted { color:var(--muted); font-size:12px }
+    .totals { margin-top:18px; width:360px; float:right }
+    .totals table { width:100%; border-collapse:collapse }
+    .totals td { padding:8px 6px }
+    .totals .label { color:var(--muted) }
+    .totals .grand { font-size:16px; font-weight:800; color:var(--brand) }
+    .signature { margin-top:48px; display:flex; justify-content:space-between }
+    .signature div { width:45%; text-align:center }
+    .signature-img { display:block; margin:18px auto 8px; max-width:220px; max-height:80px; object-fit:contain }
+    .footer { clear:both; margin-top:34px; text-align:center; font-size:11px; color:#666 }
+    .page-footer { position:fixed; bottom:8px; width:100%; text-align:center; font-size:10px; color:#999 }
+  </style>
+</head>
+<body>
+  <div class="invoice">
+    <div class="header">
+      <div class="company">
+        <!-- Inline logo (data URI SVG) -->
+        <img src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='48'><rect width='100%' height='100%' fill='%230a58ca'/><text x='12' y='32' font-family='Arial' font-size='18' fill='white'>SHOPNOW</text></svg>" alt="logo" />
+        <div class="name">SHOPNOW</div>
+        <div class="meta">123 Đường A, Quận B, TP. HCM<br/>MST: 0123456789</div>
+      </div>
+      <div class="invoice-info">
+        <span class="title">HÓA ĐƠN BÁN HÀNG</span>
+        <div class="small">0909 123 456 • shop@example.com</div>
+      </div>
+    </div>
+
+    <div class="meta">
+      <div class="customer">
+        <strong>Người nhận</strong>
+        <div>Thanh Trần</div>
+        <div class="muted">123 Đường A, Phường X</div>
+        <div class="muted">0988888888</div>
+        <div class="muted">test@gmail.com</div>
+      </div>
+      <div class="order-meta">
+        <div><strong>Mã đơn:</strong> 938100142</div>
+        <div><strong>Ngày:</strong> 14:07:35 21/11/2025</div>
+        <div><strong>Trạng thái:</strong> pending</div>
+      </div>
+    </div>
+
+    <table class="items-table">
+      <thead>
+        <tr>
+          <th>Sản phẩm</th>
+          <th class="text-right">SL</th>
+          <th class="text-right">Đơn giá</th>
+          <th class="text-right">Tổng</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <div class="product-item">
+              <img class="product-thumb" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'><rect width='100%' height='100%' fill='%23f6f7fb'/><text x='4' y='36' font-family='Arial' font-size='10' fill='%230a58ca'>Ảnh SP</text></svg>" alt="thumb" />
+              <div>
+                <div class="product-name">Degrey Korea MASSMONSTER Áo Khoác Jersey Baseball - BASEMASS</div>
+                <div class="product-meta">Size: L</div>
+              </div>
+            </div>
+          </td>
+          <td class="text-right">1</td>
+          <td class="text-right">350.000 ₫</td>
+          <td class="text-right">350.000 ₫</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="totals">
+      <table>
+        <tr>
+          <td>Tạm tính</td>
+          <td class="text-right">350.000 ₫</td>
+        </tr>
+        <tr>
+          <td>Phí vận chuyển</td>
+          <td class="text-right">30.000 ₫</td>
+        </tr>
+        <tr>
+          <td>Giảm giá</td>
+          <td class="text-right">0 ₫</td>
+        </tr>
+        <tr style="font-weight:700; border-top:2px solid #eee">
+          <td>Tổng thanh toán</td>
+          <td class="text-right">380.000 ₫</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="signature">
+      <div>
+        <div>Người bán</div>
+        <!-- Seller signature (data URI SVG) -->
+        <img class="signature-img" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='80'><text x='8' y='52' font-family='Segoe Script, Pacifico, Brush Script MT' font-size='42' fill='%230a58ca'>ShopNOW</text></svg>" alt="seller-sign" />
+      </div>
+      <div>
+        <div>Người nhận</div>
+        <!-- Recipient signature (data URI SVG) -->
+        <img class="signature-img" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='80'><text x='10' y='52' font-family='Segoe Script, Pacifico, Brush Script MT' font-size='36' fill='%230a58ca'>Thanh Trần</text></svg>" alt="recipient-sign" />
+      </div>
+    </div>
+
+    <div class="footer">SHOPNOW - 123 Đường A - Điện thoại: 0909123456</div>
+  </div>
+  <div class="page-footer">Trang 1 / 1</div>
+</body>
+</html>
