@@ -99,7 +99,86 @@ async function prepareVoucherSnapshot(voucherCode, orderItems, subtotal, shippin
 
   return { voucher, discount, snapshot };
 }
+async function sendZNS(order, type) {
+  try {
+    const phone = String(
+      order.shippingAddress?.phone || order.guestInfo?.phone || ""
+    );
 
+    if (!phone) {
+      console.warn("Không có số điện thoại để gửi ZNS");
+      return;
+    }
+
+    const statusTextMap = {
+      confirmed: "Đã xác nhận",
+      shipped: "Đang vận chuyển",
+      delivered: "Đã giao hàng",
+      cancelled: "Đã hủy",
+    };
+
+    // =============================
+    // 1️⃣ TEMPLATE CHUNG CHO 4 TRẠNG THÁI
+    // =============================
+    if (["confirmed", "shipped", "delivered", "cancelled"].includes(type)) {
+      console.log("Gửi ZNS đơn hàng với template chung, status=", type);
+      return await sendOrderZNSByStatus({
+        phone,
+        status: type,
+        templateData: {
+          company_name: "SHOPNOW",
+          customer_name: String(
+            order.shippingAddress?.fullName ||
+              order.guestInfo?.fullName ||
+              "Quý khách"
+          ),
+          id: String(order.orderCode || ""),
+          price: `${order.totalAmount || 0} VND`,
+          address: String(
+            order.shippingAddress?.addressLine1 ||
+              order.shippingAddress?.addressLine2 ||
+              ""
+          ),
+          mobile: phone,
+          payment: order.paymentMethod?.status === "paid"
+            ? "Đã thanh toán"
+            : "Chưa thanh toán",
+
+          // ⭐ Auto status theo param template Zalo
+          status: statusTextMap[type],
+        },
+
+        trackingId: `order_${order._id}`,
+      });
+    }
+
+    // =============================
+    // 2️⃣ TEMPLATE RIÊNG CHO "completed"
+    // =============================
+    if (type === "completed") {
+      return await sendOrderZNSByStatus({
+        phone,
+        status: "completed",
+        templateData: {
+          customer_name: String(
+            order.shippingAddress?.fullName ||
+              order.guestInfo?.fullName ||
+              "Quý khách"
+          ),
+          date: new Date().toLocaleDateString("vi-VN"),
+          order_id: String(order.orderCode || ""),
+
+          // template khác → status riêng
+          status: "Đơn hàng đã hoàn tất",
+        },
+        trackingId: `order_${order._id}`,
+      });
+    }
+
+  } catch (err) {
+    console.error(`ZNS send error [${type}]`, err);
+  }
+}
 exports.createOrder = async (req, res) => {
   try {
     const {
@@ -1018,7 +1097,17 @@ exports.updateOrderStatus = async (req, res) => {
     // Update requested fields
     if (orderStatus) order.orderStatus = orderStatus;
     if (paymentStatus) order.paymentMethod.status = paymentStatus;
+    const znsStatuses = [
+      "confirmed",
+      "completed",
+      "shipped",
+      "delivered",
+      "cancelled",
+    ];
 
+    if (znsStatuses.includes(orderStatus)) {
+      await sendZNS(order, orderStatus);
+    }
     // Handle paid flow: decrease stock and redeem voucher (similar to webhook)
     if (willBePaid && prevPaymentStatus !== "paid") {
       order.paymentMethod.paidAt = new Date();
@@ -1126,26 +1215,6 @@ exports.updateOrderStatus = async (req, res) => {
           // continue anyway
         }
       }
-      try {
-        await sendOrderZNSByStatus({
-          phone: String(
-            order.shippingAddress?.phone || order.guestInfo?.phone || ""
-          ),
-          status: "complete",
-          templateData: {
-            customer_name: String(
-              order.shippingAddress?.fullName ||
-                order.guestInfo?.fullName ||
-                "Quý khách"
-            ),
-            date: new Date().toLocaleDateString("vi-VN"),
-            order_id: String(order.orderCode || ""),
-          },
-          trackingId: `order_${order._id}`,
-        });
-      } catch (err) {
-        console.error("sendOrderZNSByStatus (paid) error:", err);
-      }
     }
 
     order.updatedAt = new Date();
@@ -1212,40 +1281,7 @@ exports.confirmOrderByToken = async (req, res) => {
     const recipient = order.shippingAddress?.email || order.guestInfo?.email || null;
     if (recipient) sendOrderCreatedEmail(order, recipient).catch(e => console.warn('send order email failed', e));
     
-    try {
-      await sendOrderZNSByStatus({
-        phone: String(
-          order.shippingAddress?.phone || order.guestInfo?.phone || ""
-        ),
-        status: "confirm",
-        templateData: {
-          company_name: "SHOPNOW",
-          customer_name: String(
-            order.shippingAddress?.fullName ||
-              order.guestInfo?.fullName ||
-              "Quý khách"
-          ),
-          id: String(order.orderCode || ""),
-          price: (order.totalAmount || 0) + " VND",
-          address: String(
-            order.shippingAddress?.addressLine1 ||
-              order.shippingAddress?.addressLine2 ||
-              ""
-          ),
-          mobile: String(
-            order.shippingAddress?.phone ||
-              order.guestInfo?.phone ||
-              "Chưa có số điện thoại"
-          ),
-          payment: String(
-            order.paymentStatus === "paid" ? "Đã thanh toán" : "Chưa thanh toán"
-          ),
-        },
-        trackingId: `order_${order._id}`,
-      });
-    } catch (err) {
-      console.error("sendOrderZNSByStatus (confirm) error:", err);
-    }
+    await sendZNS(order, "confirmed");
     return res.json({ message: 'Xác nhận thành công', order });
   } catch (err) {
     console.error(err);
