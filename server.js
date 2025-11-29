@@ -28,7 +28,7 @@ app.use("/api/admin/stats", require("./src/routes/statisRoutes"));
 app.get('/ping', (req, res) => {
   res.status(200).send('ok');
 });
-
+console.log('ĐỖ MINH HÀO 8386:', corstest);
 
 app.use((err, req, res, next) => {
   console.error('Error:', err);
