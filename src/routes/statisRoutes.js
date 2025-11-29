@@ -12,7 +12,6 @@ router.get('/overview', statisController.getAdminStats);
 // GET /api/admin/stats/sales
 router.get('/sales', statisController.getSalesByPeriod);
 
-// GET /api/admin/stats/top-products
 router.get('/top-products', statisController.getTopProducts);
 
 // GET /api/admin/stats/slow-products
