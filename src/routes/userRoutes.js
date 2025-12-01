@@ -11,7 +11,8 @@ const {
     socialLogin,
     addToWishlist,
     removeFromWishlist,
-    getWishlist
+    getWishlist,
+    listStaffs, createStaffByAdmin, updateStaff, deleteStaff
 } = require("../controllers/userController");
 
 
@@ -37,6 +38,12 @@ router.post("/address", authMiddleware, addAddress);
 router.put("/address/:addressId", authMiddleware, updateAddress);
 router.delete("/address/:addressId", authMiddleware, deleteAddress);
 router.patch("/address/:addressId/default", authMiddleware, setDefaultAddress);
+
+
+router.get('/admin/staffs', authMiddleware, adminOnly, listStaffs);
+router.post('/admin/staffs', authMiddleware, adminOnly, createStaffByAdmin);
+router.put('/admin/staffs/:id', authMiddleware, adminOnly, updateStaff);
+router.delete('/admin/staffs/:id', authMiddleware, adminOnly, deleteStaff);
 
 
 
