@@ -24,6 +24,7 @@ const VoucherSchema = new mongoose.Schema({
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
 
-VoucherSchema.index({ code: 1 });
-
+module.exports = mongoose.model('Voucher', VoucherSchema);
+// `code` has `unique: true` in the schema which creates an index,
+// so the explicit schema index was removed to avoid duplicate-index warnings.
 module.exports = mongoose.model('Voucher', VoucherSchema);

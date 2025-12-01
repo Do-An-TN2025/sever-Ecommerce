@@ -420,3 +420,96 @@ exports.verifyOtpController = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// --- Admin: manage staff users ---
+// List staff and admin users (filter by role)
+exports.listStaffs = async (req, res) => {
+  try {
+    const { page = 1, limit = 20, role } = req.query;
+    const filter = { role: { $in: ["staff", "admin"] } };
+    if (role && ["staff", "admin"].includes(role)) filter.role = role;
+
+    const skip = (Number(page) - 1) * Number(limit);
+    const users = await User.find(filter)
+      .select("firstName lastName email phone role status createdAt")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit));
+
+    const total = await User.countDocuments(filter);
+    res.json({ data: users, meta: { total, page: Number(page), limit: Number(limit) } });
+  } catch (error) {
+    console.error("listStaffs error:", error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+// Create staff/admin by admin
+exports.createStaffByAdmin = async (req, res) => {
+  try {
+    const { firstName, lastName, email, password, phone, role } = req.body;
+    if (!firstName || !lastName || !email || !password || !role)
+      return res.status(400).json({ message: "Thiếu trường bắt buộc" });
+    if (!["staff", "admin"].includes(role))
+      return res.status(400).json({ message: "Role phải là 'staff' hoặc 'admin'" });
+
+    const existing = await User.findOne({ email });
+    if (existing) return res.status(400).json({ message: "Email đã tồn tại" });
+
+    const hashed = await hashPassword(password);
+    const user = await User.create({ firstName, lastName, email, password: hashed, phone, role });
+
+    res.status(201).json({ message: `${role} đã được tạo`, user: { id: user._id, email: user.email, role: user.role } });
+  } catch (error) {
+    console.error("createStaffByAdmin error:", error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+// Update staff (admin only)
+exports.updateStaff = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { firstName, lastName, phone, role, status, password } = req.body;
+
+    const update = {};
+    if (firstName !== undefined) update.firstName = firstName;
+    if (lastName !== undefined) update.lastName = lastName;
+    if (phone !== undefined) update.phone = phone;
+    if (role !== undefined && ["staff", "admin", "customer"].includes(role)) update.role = role;
+    if (status !== undefined) update.status = status;
+    if (password) {
+      update.password = await hashPassword(password);
+    }
+
+    const user = await User.findByIdAndUpdate(id, { $set: update }, { new: true }).select("-password");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    res.json({ message: "User updated", user });
+  } catch (error) {
+    console.error("updateStaff error:", error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+// Delete staff (soft delete by setting status or hard delete)
+exports.deleteStaff = async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Prefer soft-delete: set status = 'inactive'
+    const user = await User.findById(id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (user.role === 'admin') {
+      return res.status(400).json({ message: "Không thể xóa admin" });
+    }
+
+    user.status = 'inactive';
+    await user.save();
+
+    res.json({ message: "User đã bị deactivated" });
+  } catch (error) {
+    console.error("deleteStaff error:", error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
