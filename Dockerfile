@@ -1,22 +1,23 @@
-FROM node:20-alpine
+FROM node:20-slim
 
-# Thư mục chứa app
 WORKDIR /usr/src/app
 
-# Copy package.json và lock file để cache
+# Tắt logs NPM cho nhẹ
+ENV NPM_CONFIG_LOGLEVEL=warn
+
+# Cài Chromium (cho Puppeteer)
+RUN apt-get update && apt-get install -y chromium && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
 COPY package*.json ./
 
-# Cài dependencies (bỏ dev để nhẹ)
 RUN npm install --omit=dev
 
-# Copy toàn bộ source code
 COPY . .
 
-# Environment (Render sẽ override)
 ENV NODE_ENV=production
-
-# Expose port (Render sẽ dùng biến PORT)
 EXPOSE 10000
 
-# Chạy server
 CMD ["npm", "start"]
