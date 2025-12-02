@@ -12,7 +12,8 @@ const {
     addToWishlist,
     removeFromWishlist,
     getWishlist,
-    listStaffs, createStaffByAdmin, updateStaff, deleteStaff
+    listStaffs, createStaffByAdmin, updateStaff, deleteStaff,
+    listPublicStaffs
 } = require("../controllers/userController");
 
 
@@ -20,6 +21,10 @@ const {
 const {authMiddleware , adminOnly} = require("../middlewares/authMiddleware");
 
 
+
+
+
+router.get('/public/staffs', listPublicStaffs);
 // api wishlist
 router.get("/wishlist", authMiddleware, getWishlist);
 router.post("/wishlist", authMiddleware, addToWishlist);
@@ -44,6 +49,8 @@ router.get('/admin/staffs', authMiddleware, adminOnly, listStaffs);
 router.post('/admin/staffs', authMiddleware, adminOnly, createStaffByAdmin);
 router.put('/admin/staffs/:id', authMiddleware, adminOnly, updateStaff);
 router.delete('/admin/staffs/:id', authMiddleware, adminOnly, deleteStaff);
+
+
 
 
 

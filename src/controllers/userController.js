@@ -470,11 +470,12 @@ exports.createStaffByAdmin = async (req, res) => {
 exports.updateStaff = async (req, res) => {
   try {
     const { id } = req.params;
-    const { firstName, lastName, phone, role, status, password } = req.body;
+    const { firstName, lastName, phone,email, role, status, password } = req.body;
 
     const update = {};
     if (firstName !== undefined) update.firstName = firstName;
     if (lastName !== undefined) update.lastName = lastName;
+    if (email !== undefined) update.email = email;
     if (phone !== undefined) update.phone = phone;
     if (role !== undefined && ["staff", "admin", "customer"].includes(role)) update.role = role;
     if (status !== undefined) update.status = status;
@@ -511,5 +512,36 @@ exports.deleteStaff = async (req, res) => {
   } catch (error) {
     console.error("deleteStaff error:", error);
     res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+// Public endpoint: list active staff for public view (no auth)
+exports.listPublicStaffs = async (req, res) => {
+  try {
+    const { page = 1, limit = 20, q } = req.query;
+    const filter = { role: 'staff', status: 'active' };
+
+    if (q && q.trim()) {
+      const regex = new RegExp(q.trim(), 'i');
+      filter.$or = [
+        { firstName: regex },
+        { lastName: regex },
+        { email: regex }
+      ];
+    }
+
+    const skip = (Number(page) - 1) * Number(limit);
+    const users = await User.find(filter)
+      .select('firstName lastName avatar phone email role')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit))
+      .lean();
+
+    const total = await User.countDocuments(filter);
+    res.json({ data: users, meta: { total, page: Number(page), limit: Number(limit) } });
+  } catch (error) {
+    console.error('listPublicStaffs error:', error);
+    res.status(500).json({ message: 'Lỗi server' });
   }
 };

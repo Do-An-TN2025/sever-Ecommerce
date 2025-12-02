@@ -838,6 +838,71 @@ exports.getAllProducts = async (req, res) => {
   }
 };
 
+// GET /api/products/all?key=quần áo&page=1&limit=20
+// Return all products (paginated) and if `key` provided, filter products that match any keyword
+exports.getAllProductsFiltered = async (req, res) => {
+  try {
+    const { key, page = 1, limit = 20 } = req.query;
+    const PAGE = Math.max(1, parseInt(page));
+    const LIMIT = Math.max(1, Math.min(100, parseInt(limit)));
+
+    const filter = { status: 'active' };
+
+    if (key && String(key).trim().length > 0) {
+      // split by spaces or commas, remove empties
+      const terms = String(key).split(/[ ,]+/).map(t => t.trim()).filter(Boolean);
+      if (terms.length > 0) {
+        const regexes = terms.map(t => new RegExp(t, 'i'));
+        filter.$or = [
+          { name: { $in: regexes } },
+          { shortDescription: { $in: regexes } },
+          { brand: { $in: regexes } },
+          { tags: { $in: regexes } }
+        ];
+      }
+    }
+
+    const skip = (PAGE - 1) * LIMIT;
+    const products = await Product.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(LIMIT)
+      .lean();
+
+    const total = await Product.countDocuments(filter);
+
+    // load variants for returned products
+    const productIds = products.map(p => p._id);
+    const variants = await ProductVariant.find({ productId: { $in: productIds } }).lean();
+    const variantsByProduct = variants.reduce((acc, v) => {
+      const k = String(v.productId);
+      (acc[k] = acc[k] || []).push(v);
+      return acc;
+    }, {});
+
+    const results = products.map(p => {
+      const pvars = variantsByProduct[String(p._id)] || [];
+      const defaultVariant = pvars.find(v => v.onSale) || pvars[0] || null;
+      return {
+        ...p,
+        variants: pvars,
+        defaultVariant,
+        variantsCount: pvars.length
+      };
+    });
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Lấy sản phẩm thành công',
+      data: results,
+      meta: { total, page: PAGE, limit: LIMIT }
+    });
+  } catch (err) {
+    console.error('getAllProductsFiltered error', err);
+    return res.status(500).json({ status: 'error', message: 'Lỗi server', error: err.message });
+  }
+};
+
 exports.getAllProductsWithDefaultVariant = async (req, res) => {
   try {
     // Lấy tất cả product
