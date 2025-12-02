@@ -6,6 +6,7 @@ const reviewController = require('../controllers/reviewController');
 
 router.get("/", productController.getAllProducts);
 router.get("/default-variant", productController.getAllProductsWithDefaultVariant);
+router.get("/all", productController.getAllProductsFiltered);
 router.get("/search", productController.searchProducts);
 router.get("/best-sellers", productController.getBestSellers);
 router.get("/new", productController.getNewProducts);

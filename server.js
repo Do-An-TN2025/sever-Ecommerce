@@ -5,10 +5,39 @@ const { ENV, connectDB } = require("./src/config");
 const app = express();
 app.use(express.json());
 
-app.use(cors({
-  origin: [process.env.CLIENT_URL, "http://localhost:3000"],
-  credentials: true
-}));
+// CORS: support multiple allowed origins via env `CLIENT_URLS` (comma separated)
+// Fallback to single `CLIENT_URL` for backward compatibility.
+const rawClientUrls = process.env.CLIENT_URLS || process.env.CLIENT_URL || "";
+const allowedOrigins = rawClientUrls
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+// Always allow common local dev origins if not explicitly provided
+if (process.env.NODE_ENV !== 'production') {
+  if (!allowedOrigins.includes('http://localhost:3000')) allowedOrigins.push('http://localhost:3000');
+  if (!allowedOrigins.includes('http://localhost:5173')) allowedOrigins.push('http://localhost:5173');
+  if (!allowedOrigins.includes('http://127.0.0.1:3000')) allowedOrigins.push('http://127.0.0.1:3000');
+  if (!allowedOrigins.includes('http://127.0.0.1:5173')) allowedOrigins.push('http://127.0.0.1:5173');
+}
+
+console.log('Allowed CORS origins:', allowedOrigins);
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like curl, mobile apps, server-to-server)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1) return callback(null, true);
+    console.warn('Blocked CORS origin:', origin);
+    return callback(new Error('CORS policy: This origin is not allowed - ' + origin));
+  },
+  credentials: true,
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization','X-Requested-With']
+};
+
+app.use(cors(corsOptions));
+
 const corstest=process.env.CLIENT_URL;
 console.log('Test CORS DEPLOYD:', corstest);
 // Routes

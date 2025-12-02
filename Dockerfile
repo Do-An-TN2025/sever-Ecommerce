@@ -1,20 +1,23 @@
-# Sử dụng Node.js LTS
-FROM node:22
 
-# Tạo thư mục app
+FROM node:18
+
+# Tạo thư mục chứa app
 WORKDIR /usr/src/app
 
-# Copy package.json và package-lock.json trước để cài đặt dependencies
+# Copy package.json trước để cache layer
 COPY package*.json ./
 
 # Cài đặt dependencies
-RUN npm install --production    
+RUN npm install --production
 
-# Copy toàn bộ source code vào container
+# Copy toàn bộ source sau cùng
 COPY . .
 
-# Biến môi trường (Render sẽ override bằng .env)
+# Render sẽ tự override biến môi trường
 ENV NODE_ENV=production
+
+# Expose port (Render sẽ dùng PORT env)
+EXPOSE 10000
 
 # Chạy server
 CMD ["npm", "start"]
