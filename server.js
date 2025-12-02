@@ -17,6 +17,7 @@ const allowedOrigins = rawClientUrls
 if (process.env.NODE_ENV !== 'production') {
   if (!allowedOrigins.includes('http://localhost:3000')) allowedOrigins.push('http://localhost:3000');
   if (!allowedOrigins.includes('http://localhost:5173')) allowedOrigins.push('http://localhost:5173');
+  if (!allowedOrigins.includes('https://web-ecom-omega.vercel.app')) allowedOrigins.push('https://web-ecom-omega.vercel.app');
   if (!allowedOrigins.includes('http://127.0.0.1:3000')) allowedOrigins.push('http://127.0.0.1:3000');
   if (!allowedOrigins.includes('http://127.0.0.1:5173')) allowedOrigins.push('http://127.0.0.1:5173');
 }
