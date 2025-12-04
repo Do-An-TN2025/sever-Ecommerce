@@ -58,7 +58,8 @@ exports.getReviewsBySlug = async (req, res) => {
       .sort({ createdAt: -1 })
       .skip((PAGE - 1) * LIMIT)
       .limit(LIMIT)
-      .populate('userId', 'firstName lastName avatar');
+      .populate('userId', 'firstName lastName avatar')
+      .populate('adminReply.adminId', 'firstName lastName avatar');
 
     return res.json({ productId: prod._id, total, page: PAGE, perPage: LIMIT, reviews });
   } catch (err) {
@@ -88,6 +89,7 @@ exports.getAllReviews = async (req, res) => {
       .limit(LIMIT)
       .populate('userId', 'firstName lastName email avatar')
       .populate('productId', 'name slug')
+      .populate('adminReply.adminId', 'firstName lastName email avatar')
       .lean();
 
     return res.json({ total, page: PAGE, perPage: LIMIT, reviews });
@@ -131,6 +133,37 @@ exports.deleteReview = async (req, res) => {
   }
 };
 
+// Admin reply to a review (create or update reply)
+exports.replyToReview = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ message: 'Auth required' });
+    if (user.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+
+    const { id } = req.params;
+    const { message } = req.body || {};
+    if (!id) return res.status(400).json({ message: 'review id required' });
+    if (!message) return res.status(400).json({ message: 'message is required' });
+
+    const review = await ProductReview.findById(id);
+    if (!review) return res.status(404).json({ message: 'Review not found' });
+
+    review.adminReply = { adminId: user._id, message, repliedAt: new Date() };
+    await review.save();
+
+    const populated = await ProductReview.findById(id)
+      .populate('userId', 'firstName lastName avatar')
+      .populate('productId', 'name slug')
+      .populate('adminReply.adminId', 'firstName lastName avatar')
+      .lean();
+
+    return res.json({ message: 'Reply saved', review: populated });
+  } catch (err) {
+    console.error('replyToReview error', err);
+    return res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
 // Get latest reviews from 5 most recent distinct customers across the site
 exports.getLatestFiveCustomerReviews = async (req, res) => {
   try {
@@ -140,6 +173,7 @@ exports.getLatestFiveCustomerReviews = async (req, res) => {
       .limit(50) // fetch a buffer to find 5 distinct users
       .populate('userId', 'firstName lastName avatar')
       .populate('productId', 'name slug')
+      .populate('adminReply.adminId', 'firstName lastName avatar')
       .lean();
 
     const usersSeen = new Set();
