@@ -5,7 +5,13 @@ const productReviewSchema = new mongoose.Schema(
     productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     rating: { type: Number, min: 1, max: 5, required: true },
-    comment: { type: String, trim: true }
+      comment: { type: String, trim: true },
+      // Admin reply subdocument: stored when an admin responds to a customer's review
+      adminReply: {
+        adminId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        message: { type: String, trim: true },
+        repliedAt: { type: Date }
+      }
   },
   { timestamps: true }
 );

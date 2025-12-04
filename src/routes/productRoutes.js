@@ -23,6 +23,8 @@ router.post('/:productId/reviews', authMiddleware, reviewController.createOrUpda
 
 // delete review (owner or admin)
 router.delete('/reviews/:id', authMiddleware, reviewController.deleteReview);
+// admin reply to a review
+router.put('/reviews/:id/reply', authMiddleware, adminOnly, reviewController.replyToReview);
 router.post("/recently-viewed", productController.getRecentlyViewedProducts);
 router.get("/:slug", productController.getProductBySlugCategory);
 router.get("/variant/details", productController.getVariantDetails);
