@@ -20,6 +20,7 @@ if (process.env.NODE_ENV !== 'production') {
   if (!allowedOrigins.includes('https://web-ecom-omega.vercel.app')) allowedOrigins.push('https://web-ecom-omega.vercel.app');
   if (!allowedOrigins.includes('http://127.0.0.1:3000')) allowedOrigins.push('http://127.0.0.1:3000');
   if (!allowedOrigins.includes('http://127.0.0.1:5173')) allowedOrigins.push('http://127.0.0.1:5173');
+  if (!allowedOrigins.includes('https://arc-ecommerce-pos.dfm-engineering.com')) allowedOrigins.push('https://arc-ecommerce-pos.dfm-engineering.com');
 }
 
 console.log('Allowed CORS origins:', allowedOrigins);
