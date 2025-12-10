@@ -190,7 +190,17 @@ exports.getLatestFiveCustomerReviews = async (req, res) => {
         user: r.userId || null,
         rating: r.rating,
         comment: r.comment,
-        createdAt: r.createdAt
+        createdAt: r.createdAt,
+        adminReply: r.adminReply ? {
+          message: r.adminReply.message || null,
+          repliedAt: r.adminReply.repliedAt || null,
+          admin: r.adminReply.adminId ? {
+            _id: r.adminReply.adminId._id || r.adminReply.adminId,
+            firstName: r.adminReply.adminId.firstName,
+            lastName: r.adminReply.adminId.lastName,
+            avatar: r.adminReply.adminId.avatar
+          } : null
+        } : null
       });
       if (result.length >= 5) break;
     }

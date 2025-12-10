@@ -3,6 +3,7 @@ const Category = require("../models/Category");
 const ProductVariant = require("../models/ProductVariant");
 const mlService = require("../services/mlRecommenderService");
 const Order = require("../models/Order");
+const ProductReview = require('../models/ProductReview');
 const ProductRecentlyViewed = require('../models/ProductRecentlyViewed');
 
 exports.createProduct = async (req, res) => {
@@ -335,6 +336,70 @@ exports.getProductDetailsBySlug = async (req, res) => {
     // 👇 tạo mapping color -> sizes khả dụng
     const colorSizeMap = {};
 
+    // --- Reviews: summary + recent reviews ---
+    let reviewsSummary = { average: 0, count: 0, breakdown: { 1:0,2:0,3:0,4:0,5:0 } };
+    let recentReviews = [];
+    try {
+      const stats = await ProductReview.aggregate([
+        { $match: { productId: product._id, approved: true } },
+        { $group: { _id: null, avgRating: { $avg: '$rating' }, count: { $sum: 1 } } }
+      ]);
+      if (stats && stats.length > 0) {
+        reviewsSummary.average = stats[0].avgRating ? Number(stats[0].avgRating.toFixed(2)) : 0;
+        reviewsSummary.count = stats[0].count || 0;
+      }
+      const breakdown = await ProductReview.aggregate([
+        { $match: { productId: product._id, approved: true } },
+        { $group: { _id: '$rating', count: { $sum: 1 } } }
+      ]);
+      (breakdown || []).forEach(b => { const k = Number(b._id); if (k>=1 && k<=5) reviewsSummary.breakdown[k] = b.count; });
+
+      recentReviews = await ProductReview.find({ productId: product._id, approved: true })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .populate('userId', 'firstName lastName avatar')
+        .populate('adminReply.adminId', 'firstName lastName avatar')
+        .lean();
+    } catch (e) {
+      console.error('Error loading product reviews for details:', e && e.message ? e.message : e);
+      reviewsSummary = { average: 0, count: 0, breakdown: {1:0,2:0,3:0,4:0,5:0} };
+      recentReviews = [];
+    }
+
+    // Fallback: if there are no *approved* reviews but the product document
+    // indicates there are reviews (product.rating.count > 0), use product.rating
+    // as the summary and attempt to load reviews without the `approved` filter
+    // (useful when reviews exist but haven't been marked `approved` yet).
+    // This avoids showing an empty reviewsSummary when product.rating shows data.
+    if (reviewsSummary.count === 0 && product.rating && product.rating.count && product.rating.count > 0) {
+      try {
+        reviewsSummary = {
+          average: typeof product.rating.average === 'number'
+            ? Number(product.rating.average.toFixed ? product.rating.average.toFixed(2) : product.rating.average)
+            : Number((product.rating.average || 0)),
+          count: product.rating.count,
+          breakdown: reviewsSummary.breakdown
+        };
+      } catch (e) {
+        // fallback if toFixed not available or other issue
+        reviewsSummary = { average: product.rating.average || 0, count: product.rating.count, breakdown: reviewsSummary.breakdown };
+      }
+
+      try {
+        const fallbackReviews = await ProductReview.find({ productId: product._id })
+          .sort({ createdAt: -1 })
+          .limit(5)
+          .populate('userId', 'firstName lastName avatar')
+          .populate('adminReply.adminId', 'firstName lastName avatar')
+          .lean();
+        if (Array.isArray(fallbackReviews) && fallbackReviews.length > 0) {
+          recentReviews = fallbackReviews;
+        }
+      } catch (e) {
+        console.error('Error loading fallback product reviews:', e && e.message ? e.message : e);
+      }
+    }
+
     variants.forEach(variant => {
       // lấy tất cả size khả dụng của màu này
       const sizesForColor = variant.sizes
@@ -380,7 +445,25 @@ exports.getProductDetailsBySlug = async (req, res) => {
       colorSizeMap,   
       minPrice: minPrice === Infinity ? 0 : minPrice,
       maxPrice,
-      totalStock
+      totalStock,
+      reviewsSummary,
+      recentReviews: recentReviews.map(r => ({
+        _id: r._id,
+        rating: r.rating,
+        comment: r.comment || r.content || null,
+        user: r.userId ? { _id: r.userId._id, firstName: r.userId.firstName, lastName: r.userId.lastName, avatar: r.userId.avatar } : null,
+        createdAt: r.createdAt,
+        adminReply: r.adminReply ? {
+          message: r.adminReply.message || null,
+          repliedAt: r.adminReply.repliedAt || null,
+          admin: r.adminReply.adminId ? {
+            _id: r.adminReply.adminId._id || r.adminReply.adminId,
+            firstName: r.adminReply.adminId.firstName,
+            lastName: r.adminReply.adminId.lastName,
+            avatar: r.adminReply.adminId.avatar
+          } : null
+        } : null
+      }))
     };
 
     res.json(productData);
