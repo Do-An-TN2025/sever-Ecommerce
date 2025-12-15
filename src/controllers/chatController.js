@@ -89,9 +89,19 @@ function normalizeColor(sentenceLower) {
   return null;
 }
 
-function extractSize(textLower) {
-  const m = textLower.match(/\b(3xl|2xl|xxl|xl|xs|s|m|l)\b/);
-  return m ? m[1].toUpperCase() : null;
+function normalizeSizeToken(tok) {
+  if (!tok) return tok;
+  const t = tok.toString().trim().toUpperCase();
+  if (t === 'XXL') return '2XL';
+  if (t === 'XLL') return 'XL';
+  return t;
+}
+
+function extractSizes(textLower) {
+  const matches = textLower.match(/\b(3xl|2xl|xxl|xl|xs|s|m|l)\b/gi);
+  if (!matches) return null;
+  const normalized = [...new Set(matches.map(m => normalizeSizeToken(m)))];
+  return normalized.length === 1 ? normalized[0] : normalized;
 }
 
 function extractPrices(textLower) {
@@ -99,7 +109,11 @@ function extractPrices(textLower) {
   const unitFactor = (n, u) => {
     let num = Number(n.replace(/[.,]/g, ""));
     if (isNaN(num)) return null;
-    if (!u) return num;
+    // If no explicit unit and small number (e.g. "300"), assume thousands (300 -> 300_000)
+    if (!u) {
+      if (num < 1000) return num * 1_000;
+      return num;
+    }
     u = u.trim();
     if (["k","ngàn","nghìn","k."].includes(u)) return num * 1_000;
     if (["tr","triệu"].includes(u)) return num * 1_000_000;
@@ -124,9 +138,12 @@ function extractPrices(textLower) {
     const dir = sM[1];
     const val = unitFactor(sM[2], sM[4]);
     if (val) {
+      // If user says e.g. "giá 300" interpret 300 as 300k (handled above) and
+      // apply a default range: min = value, max = value * 1.3 (about +30%).
+      // If user used directional words use them strictly.
       if (!dir || dir === "~") {
-        minPrice = Math.round(val * 0.85);
-        maxPrice = Math.round(val * 1.15);
+        minPrice = Math.round(val);
+        maxPrice = Math.round(val * 1.3);
       } else if (["dưới","<","<="].includes(dir)) {
         maxPrice = val;
       } else if (["trên","từ",">",">="].includes(dir)) {
@@ -191,7 +208,7 @@ async function fallbackParse(userMessage) {
   const lower = userMessage.toLowerCase();
   const color = normalizeColor(lower);
   const { minPrice, maxPrice } = extractPrices(lower);
-  const size = extractSize(lower);
+  const size = extractSizes(lower);
   const { categorySlug, brand } = await semanticCategoryBrand(lower);
 
   let tokens = userMessage.split(/[\s,./]+/).map(t => t.trim()).filter(Boolean);
@@ -291,22 +308,47 @@ async function queryProducts(filters, pagination) {
     productFilter._id = { $in: productIds };
   }
 
-  // keywords
+  // keywords: require each token to match somewhere (AND semantics)
   if (keywords && keywords.length) {
-    const kwRegex = keywords.map(escapeRegex).join("|");
-    productFilter.$or = [
-      { name: { $regex: kwRegex, $options: "i" } },
-      { shortDescription: { $regex: kwRegex, $options: "i" } },
-      { brand: { $regex: kwRegex, $options: "i" } },
-      { tags: { $in: keywords.map(k => new RegExp(escapeRegex(k), "i")) } }
-    ];
+    productFilter.$and = keywords.map(k => {
+      const r = new RegExp(escapeRegex(k), "i");
+      return {
+        $or: [
+          { name: r },
+          { shortDescription: r },
+          { brand: r },
+          { tags: { $in: [r] } }
+        ]
+      };
+    });
   }
 
-  const baseProducts = await Product.find(productFilter)
+  let baseProducts = await Product.find(productFilter)
     .populate("categoryId", "name slug")
     .lean();
 
-  if (!baseProducts.length) return emptyResult();
+  // If strict filter yields nothing, try a looser fallback search (OR across keywords)
+  if ((!baseProducts || !baseProducts.length) && keywords && keywords.length) {
+    const orClauses = [];
+    for (const k of keywords) {
+      const r = new RegExp(escapeRegex(k), "i");
+      orClauses.push({ name: r });
+      orClauses.push({ shortDescription: r });
+      orClauses.push({ brand: r });
+      orClauses.push({ tags: { $in: [r] } });
+    }
+    const looserFilter = { status: "active", $or: orClauses };
+    if (productFilter._id) looserFilter._id = productFilter._id; // preserve pre-filtered IDs (color filter)
+    if (productFilter.categoryId) looserFilter.categoryId = productFilter.categoryId;
+    if (productFilter.brand) looserFilter.brand = productFilter.brand;
+
+    baseProducts = await Product.find(looserFilter)
+      .populate("categoryId", "name slug")
+      .limit(200)
+      .lean();
+  }
+
+  if (!baseProducts || !baseProducts.length) return emptyResult();
 
   // Load variants for all
   const idMap = baseProducts.map(p => p._id);
@@ -341,9 +383,10 @@ async function queryProducts(filters, pagination) {
     let sizeMatched = false;
 
     if (size) {
+      const requested = Array.isArray(size) ? size.map(s => normalizeSizeToken(s)) : [normalizeSizeToken(size)];
       for (const v of candidates) {
         const s = (v.sizes || []).find(sz =>
-          sz.size && sz.size.toUpperCase() === size.toUpperCase() && sz.stock > 0
+          sz.size && requested.includes(normalizeSizeToken(sz.size)) && sz.stock > 0
         );
         if (s) {
           selectedVariant = v;
@@ -656,7 +699,10 @@ exports.chatSearch = async (req, res) => {
       if (maxPrice) merged.maxPrice = maxPrice;
     }
 
-    if (merged.size) merged.size = merged.size.toUpperCase();
+    if (merged.size) {
+      if (Array.isArray(merged.size)) merged.size = merged.size.map(s => normalizeSizeToken(s));
+      else merged.size = normalizeSizeToken(merged.size);
+    }
     if (sortBy) merged.sortBy = sortBy;
     if (sortOrder) merged.sortOrder = sortOrder;
 
